@@ -99,6 +99,11 @@ program mc
   write(*,*) "The following array size parameters have been decreased"
   write(*,*) "decreased dramatically to save memory:"
   write(*,*) "gfun_grid , Tang_Toennies_grid,ewald_realspace_interaction_grid_size "
+  write(*,*) ""
+  write(*,*) " NOTE beta spline grid size has been decreased to 10000 to speed up "
+  write(*,*) "reciprocal space force calculation.  This leads to errors of ~0.1%  "
+  write(*,*) "in reciprocal space force compared to grid size of 1000000          "
+  write(*,*) ""
   ! assume orthorhombic box
   if ( ( abs(box(1,2)) > 10D-6 ) .or. ( abs(box(1,3)) > 10D-6 ) .or. ( abs(box(2,1)) > 10D-6 ) .or.  ( abs(box(2,3)) > 10D-6 ) .or. ( abs(box(3,1)) > 10D-6 ) .or. ( abs(box(3,2)) > 10D-6 ) ) then
      write(*,*)  ""

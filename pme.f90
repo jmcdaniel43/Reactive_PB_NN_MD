@@ -741,6 +741,14 @@ contains
        split_do = n_mole/n_threads+1
     endif
 
+    !****************************timing**************************************!
+    if(debug .eq. 1) then
+       call date_and_time(date,time)
+       write(*,*) "Q grid derivatives started at", time
+    endif
+    !************************************************************************!
+
+
     call OMP_SET_NUM_THREADS(n_threads)
     !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,n_mole,n_atom,target_atoms,theta_conv_Q,xyz_scale,chg,K,box,n,kk,pme_force,spline_order,split_do,small) 
     !$OMP DO SCHEDULE(dynamic, split_do)
@@ -762,6 +770,9 @@ contains
     !$OMP END PARALLEL
 
     deallocate(xyz_scale)
+
+
+
   end subroutine pme_force_recip
 
 
@@ -1009,6 +1020,7 @@ contains
 
 
 
+
 !!!!!!!!!!!!!!!!!!!!!!!!
   ! this subroutine computes derivatives of grid Q with respect 
   ! to changes in position of i_atom in i_mole
@@ -1028,7 +1040,7 @@ contains
     real*8,intent(in),dimension(3,3)::box,kk
     real*8, intent(in), dimension(:,:,:) :: xyz
     integer::i,j,k1,k2,k3,n1,n2,n3,nn1,nn2,nn3,nearpt(3)
-    integer::g1(3),g2(3)
+    integer::g1n(3),g1nmin(3),g1(3),g2(3)
     real*8::fac(3),chg_i
     real*8,dimension(3)::u,arg1,arg2,force_temp,box_length
 
@@ -1038,96 +1050,116 @@ contains
     u=xyz(i_mole,i_atom,:)
     nearpt=floor(u)
 
-    do k1=0,n
+       !!!!!!!!get bspline values from grid, therefore must check whether to see if function is being evaluated in non-zero domain, otherwise, can't call array
+    !do k1=0,n
+    ! if k1=n, arg1 >= n, so we can exclude that term in the sum, also because we exlude that term in the sum, arg1 <= n , so we dont need to check the limits of the bspline evaluation
+    do k1=0,n-1
        n1=nearpt(1)-k1
        arg1(1)=u(1)-dble(n1);
-       arg2(1)=u(1)-1.D0-dble(n1);
-       do k2=0,n
-          n2=nearpt(2)-k2
-          arg1(2)=u(2)-dble(n2)
-          arg2(2)=u(2)-1.D0-dble(n2)
-          do k3=0,n
-             n3=nearpt(3)-k3
-             arg1(3)=u(3)-dble(n3);
-             arg2(3)=u(3)-1.-dble(n3);
-             !                 fac(1)=chg_i*(B_spline(arg1(1),n-1)-B_spline(arg2(1),n-1))*B_spline(arg1(2),n)*B_spline(arg1(3),n)
-             !                 fac(2)=chg_i*(B_spline(arg1(2),n-1)-B_spline(arg2(2),n-1))*B_spline(arg1(1),n)*B_spline(arg1(3),n)
-             !                 fac(3)=chg_i*(B_spline(arg1(3),n-1)-B_spline(arg2(3),n-1))*B_spline(arg1(1),n)*B_spline(arg1(2),n)
+       arg2(1) = arg1(1) - 1d0
+       ! note arg1 > 0, so don't check for that.  for k1=n, arg1 > n
+       !if((arg1(1)<real(n)).and.(0d0<arg1(1))) then
+          !do k2=0,n
+          do k2=0,n-1
+             n2=nearpt(2)-k2
+             arg1(2)=u(2)-dble(n2)
+             arg2(2) = arg1(2) - 1d0
+             !if((arg1(2)<real(n)).and.(0d0<arg1(2))) then
+                !do k3=0,n
+                 do k3=0,n-1
+                   n3=nearpt(3)-k3
+                   arg1(3)=u(3)-dble(n3);
+                   arg2(3) = arg1(3) - 1d0
+                   !if((arg1(3)<real(n)).and.(0d0<arg1(3))) then
 
-!!!!!!!!get bspline values from grid, therefore must check whether to see if function is being evaluated in non-zero domain, otherwise, can't call array
 !!!!!force in x direction
-             fac=0.D0
-             g2=ceiling(arg2/real(n-1)*real(spline_grid))
-             g1=ceiling(arg1/real(n)*real(spline_grid));g1(1)=ceiling(arg1(1)/real(n-1)*real(spline_grid))
-             if((arg1(1)<real(n-1)).and.(0.<arg1(1)).and.(arg1(2)<real(n)).and.(0.<arg1(2)).and.(arg1(3)<real(n)).and.(0.<arg1(3))) then 
-                if(spline_order.eq.6) then
-                   fac(1)=chg_i*(B5_spline(g1(1))*B6_spline(g1(2))*B6_spline(g1(3)))
-                else
-                   fac(1)=chg_i*(B3_spline(g1(1))*B4_spline(g1(2))*B4_spline(g1(3)))  
-                endif
+                      fac=0d0
 
-             endif
-             if((arg2(1)<real(n-1)).and.(0.<arg2(1)).and.(arg1(2)<real(n)).and.(0.<arg1(2)).and.(arg1(3)<real(n)).and.(0.<arg1(3))) then 
-                if(spline_order.eq.6) then
-                   fac(1)=fac(1)+chg_i*(-B5_spline(g2(1))*B6_spline(g1(2))*B6_spline(g1(3)))
-                else
-                   fac(1)=fac(1)+chg_i*(-B3_spline(g2(1))*B4_spline(g1(2))*B4_spline(g1(3)))  
-                endif
-             endif
-!!!!!force in y direction
-             g1=ceiling(arg1/real(n)*real(spline_grid));g1(2)=ceiling(arg1(2)/real(n-1)*real(spline_grid))
-             if((arg1(2)<real(n-1)).and.(0.<arg1(2)).and.(arg1(1)<real(n)).and.(0.<arg1(1)).and.(arg1(3)<real(n)).and.(0.<arg1(3))) then 
-                if(spline_order.eq.6) then
-                   fac(2)=chg_i*(B5_spline(g1(2))*B6_spline(g1(1))*B6_spline(g1(3)))
-                else
-                   fac(2)=chg_i*(B3_spline(g1(2))*B4_spline(g1(1))*B4_spline(g1(3)))  
-                endif
-             endif
-             if((arg2(2)<real(n-1)).and.(0.<arg2(2)).and.(arg1(1)<real(n)).and.(0.<arg1(1)).and.(arg1(3)<real(n)).and.(0.<arg1(3))) then 
-                if(spline_order.eq.6) then
-                   fac(2)=fac(2)+chg_i*(-B5_spline(g2(2))*B6_spline(g1(1))*B6_spline(g1(3)))
-                else
-                   fac(2)=fac(2)+chg_i*(-B3_spline(g2(2))*B4_spline(g1(1))*B4_spline(g1(3)))  
-                endif
-             endif
+                      ! don't use ceiling here, int() is faster and gives the same result in limit of converged grid
+                      !g2=ceiling(arg2/real(n-1)*real(spline_grid))
+                      !g1n=ceiling(arg1/real(n)*real(spline_grid))
+                      !g1nmin = ceiling(arg1/real(n-1)*real(spline_grid))
+                      g2=int(arg2/real(n-1)*real(spline_grid))
+                      g1n=int(arg1/real(n)*real(spline_grid))
+                      g1nmin = int(arg1/real(n-1)*real(spline_grid))
+
+                      g1=g1n;g1(1)=g1nmin(1);
+
+                      if(arg1(1)<real(n-1)) then 
+                         if(spline_order.eq.6) then
+                            fac(1)=chg_i*(B5_spline(g1(1))*B6_spline(g1(2))*B6_spline(g1(3)))
+                         else
+                            fac(1)=chg_i*(B3_spline(g1(1))*B4_spline(g1(2))*B4_spline(g1(3)))  
+                         endif
+                      endif
+                      ! at this point, arg1(1) < n , so arg2(1) < n - 1 , so don't check for that
+                      !if( (arg2(1)<real(n-1) ) .and.(0.<arg2(1)) ) then 
+                      if(0.<arg2(1)) then
+                         if(spline_order.eq.6) then
+                            fac(1)=fac(1)+chg_i*(-B5_spline(g2(1))*B6_spline(g1(2))*B6_spline(g1(3)))
+                         else
+                            fac(1)=fac(1)+chg_i*(-B3_spline(g2(1))*B4_spline(g1(2))*B4_spline(g1(3)))  
+                         endif
+                      endif
+!!!!!!force in y direction
+                      g1=g1n;g1(2)=g1nmin(2)
+                      if ( arg1(2)<real(n-1) ) then 
+                         if(spline_order.eq.6) then
+                            fac(2)=chg_i*(B5_spline(g1(2))*B6_spline(g1(1))*B6_spline(g1(3)))
+                         else
+                            fac(2)=chg_i*(B3_spline(g1(2))*B4_spline(g1(1))*B4_spline(g1(3)))  
+                         endif
+                      endif
+                      if (0.<arg2(2)) then 
+                         if(spline_order.eq.6) then
+                            fac(2)=fac(2)+chg_i*(-B5_spline(g2(2))*B6_spline(g1(1))*B6_spline(g1(3)))
+                         else
+                            fac(2)=fac(2)+chg_i*(-B3_spline(g2(2))*B4_spline(g1(1))*B4_spline(g1(3)))  
+                         endif
+                      endif
 !!!!!force in z direction
-             g1=ceiling(arg1/real(n)*real(spline_grid));g1(3)=ceiling(arg1(3)/real(n-1)*real(spline_grid))
-             if((arg1(3)<real(n-1)).and.(0.<arg1(3)).and.(arg1(1)<real(n)).and.(0.<arg1(1)).and.(arg1(2)<real(n)).and.(0.<arg1(2))) then 
-                if(spline_order.eq.6) then
-                   fac(3)=chg_i*(B5_spline(g1(3))*B6_spline(g1(1))*B6_spline(g1(2)))
-                else
-                   fac(3)=chg_i*(B3_spline(g1(3))*B4_spline(g1(1))*B4_spline(g1(2)))  
-                endif
-             endif
-             if((arg2(3)<real(n-1)).and.(0.<arg2(3)).and.(arg1(1)<real(n)).and.(0.<arg1(1)).and.(arg1(2)<real(n)).and.(0.<arg1(2))) then 
-                if(spline_order.eq.6) then
-                   fac(3)=fac(3)+chg_i*(-B5_spline(g2(3))*B6_spline(g1(1))*B6_spline(g1(2)))
-                else
-                   fac(3)=fac(3)+chg_i*(-B3_spline(g2(3))*B4_spline(g1(1))*B4_spline(g1(2)))  
-                endif
-             endif
+                      g1=g1n;g1(3)=g1nmin(3)
+                      if(arg1(3)<real(n-1)) then 
+                         if(spline_order.eq.6) then
+                            fac(3)=chg_i*(B5_spline(g1(3))*B6_spline(g1(1))*B6_spline(g1(2)))
+                         else
+                            fac(3)=chg_i*(B3_spline(g1(3))*B4_spline(g1(1))*B4_spline(g1(2)))  
+                         endif
+                      endif
+                      if (0.<arg2(3))  then 
+                         if(spline_order.eq.6) then
+                            fac(3)=fac(3)+chg_i*(-B5_spline(g2(3))*B6_spline(g1(1))*B6_spline(g1(2)))
+                         else
+                            fac(3)=fac(3)+chg_i*(-B3_spline(g2(3))*B4_spline(g1(1))*B4_spline(g1(2)))  
+                         endif
+                      endif
 
 
-             if(n1<0) then
-                nn1=n1+K
-             else
-                nn1=n1
-             endif
-             if(n2<0) then
-                nn2=n2+K
-             else
-                nn2=n2
-             endif
-             if(n3<0) then
-                nn3=n3+K
-             else
-                nn3=n3
-             endif
-             force=force+fac*FQ(nn1+1,nn2+1,nn3+1)
-!!$                 dQdr(nn1+1,nn2+1,nn3+1,:)=fac(:)
+                      if(n1<0) then
+                         nn1=n1+K
+                      else
+                         nn1=n1
+                      endif
+                      if(n2<0) then
+                         nn2=n2+K
+                      else
+                         nn2=n2
+                      endif
+                      if(n3<0) then
+                         nn3=n3+K
+                      else
+                         nn3=n3
+                      endif
+                      force=force + fac * FQ(nn1+1,nn2+1,nn3+1)
+             !  dQdr(nn1+1,nn2+1,nn3+1,:)=fac(:)
+
+!                   end if
+                enddo
+!              end if
           enddo
-       enddo
+!          end if
     enddo
+
 
     !****************change to global coordinates*****************
     ! for a general box.  The array force contains derivatives with respect to the
@@ -1144,6 +1176,8 @@ contains
 
 
   end subroutine derivative_grid_Q
+
+
 
 
 

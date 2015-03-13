@@ -301,7 +301,7 @@ character(3)  :: hybrid_md_mc         ! "no" for standard mc translation/rotatio
   !real*8::pme_realE,pme_realE_try
   ! grid Bsplines,for order n, need n spline and n-1 spline grids
   ! B(i) corresponds to B(i*n/gridsize)
-  integer,parameter::spline_grid=1000000,erfc_grid=1000000, gfun_grid=100 !gfun_grid=500000
+  integer,parameter::spline_grid=10000,erfc_grid=1000000, gfun_grid=100 !gfun_grid=500000
   real*8,parameter::erfc_max=10d0              ! this is max value up to which erfc is grid
   real*8,parameter::gfun_max=5.0d0
   real*8,dimension(spline_grid)::B6_spline,B5_spline,B4_spline,B3_spline
