@@ -1,0 +1,320 @@
+; ************************ standard bond, angle, dihedral types sections
+[ bondtypes ]
+; i    j  func       b0          kb( kj/mol / angstrom4)
+; atom types have extension _a for acid, _b for base
+; bondtypes of function "2" have force constants (kb) from GROMOS, b0 taken from ab initio structure
+; bondtypes of function "1" have been fully parameterized ab initio
+  S_b      O_b       1    1.48     4201.0    ; parameterized from S-O )sulfonate) bond scan
+  C_b      S_b       2    1.81      562.0    ; b0 is average for sulfonate/sulfuric acid
+; sulfonic acid
+  S_a      O_a       1    1.45     5430.0    ; parameterized from S-O (sulfonic acid) bond scan
+  S_a      O_ah      1    1.62     3675.7    ; parameterized from S-O(H) bond scan
+  C_a      S_a       2    1.81      562.0    ; b0 is average for sulfonate/sulfuric acid
+  O_ah     H_a	     3    372.2086     2.1               0.97
+; spc
+  OW    HW      1    1.012   4431.5338 
+; ms-evb3 hydronium   D (kj/mol)   alpha(angstrom^-1)  R0(angstrom)
+  O_h3o    H_h3o      3     372.2086     2.1               1.0 
+ 
+
+[ angletypes ]
+;  i    j    k  func       th0       cth(kj/mol )
+; atom types have extension _a for acid, _b for base
+; for sulfonate, th0 taken from ab initio structure, cth from GROMOS
+ C_b   S_b   O_b      2      103.0      520.00
+ O_b   S_b   O_b      2      114.0      780.00
+; for sulfuric acid, th0 taken from ab initio structure, cth from GROMOS
+ C_a   S_a   O_a      2      110.0      520.00  ; these force constants may need reduced for transitions
+ C_a   S_a   O_ah     2      100.0      520.00
+ O_a   S_a   O_a      2      122.0      780.00
+ O_a   S_a   O_ah     2      107.0      780.00
+ S_a   O_ah  H_a      1      106.0      378.0   ; parameterized from S-O-H angle scan
+; spc
+  HW     OW    HW      1   113.24    317.5656
+; ms-evb3 hydronium
+  H_h3o     O_h3o    H_h3o      1   111.7269  324.20477
+
+
+[ dihedraltypes ]
+;  i    j    k   l  func       th0 (degrees)       cth(kj/mol )   n
+; proper
+C_a    S_a   O_ah   H_a     1       180.0       2.92          3.0    ; parameterized to C-S-O-H dihedral scan
+; improper 
+S_b   C_b   O_b  O_b         2       35.26439   334.84617 
+S_b   O_b   O_b  O_b         2       35.26439   334.84617
+S_a   C_a   O_a  O_a         2       35.26439   334.84617
+S_a   C_a   O_a  O_ah         2       35.26439   334.84617
+S_a   O_a   O_a  O_ah         2       35.26439   334.84617
+S_a   O_ah   O_a  O_a         2       35.26439   334.84617
+S_a   O_a   O_ah  O_a         2       35.26439   334.84617
+
+
+; *************************** section for special evb force field terms
+; units in this section are same as in rest of the code, i.e. kJ/mol, Angstrom, etc.
+; for ms-evb3 water model, see JPC B, 2008, 112, 467-482 (and errata, JPC B, 2008, 112, 7146)
+[ evb_parameters ]
+
+[ reference_energy ] 
+; here, the state CH3SO3- + H3O+ is defined as 0
+so3h        -643.65
+h3o          0.0
+
+[ adiabat_non_bond ]
+; this first type is O-O born-mayer repulsion, mediated by hydrogen positions
+; i.e. equation 7 in JPCB,2008,112,467-482 (see erratum for correct formula)
+; rs and rc are for switching function equation 9 in paper
+[ donor_acceptor ]
+; heavy_atom1  heavy_atom2  hydrogen_type  B   b    d0    b'    rs     rc
+ OW     O_h3o    H_h3o     47.1118977    1.1    2.4   2.12     2.85    3.05
+ OW     O_ah     H_a       47.1118977    1.1    2.4   2.12     2.85    3.05
+ O_b    O_h3o    H_h3o     47.1118977    1.1    2.4   2.12     2.85    3.05
+
+[ proton_acceptor ]
+; this is H-O born-mayer term between proton and acceptor, equation 8 in JPCB,2008,112,467-482
+; rs and rc are for switching function equation 9 in paper
+; heavy_atom1   hydrogen_type    C     c   d0      rs       rc
+ OW      H_h3o        19.1274639       2.1     1.0     2.3     2.5
+ O_b     H_h3o        19.1274639       2.1     1.0     2.3     2.5
+ OW      H_a          19.1274639       2.1     1.0     2.3     2.5
+
+[ diabat_coupling ]
+; these parameters describe the diabatic coupling hamiltonian element, see
+; equation 10, 11, 12 in JPCB,2008,112,467-482
+[ geometry_factor ]
+; note these should be the same for conjugate-acid/base pairs
+; heavy_atom1  heavy_atom2 hydrogen_type  Vconst gamma   P   k  D  beta  R0  P'  alpha   r0   
+ OW     O_h3o    H_h3o     -97.0151921   1.8302895   0.232726   9.562153   2.94   6.0179066   3.1   10.8831327   10.0380922   1.8136426
+ O_b    O_h3o    H_h3o     -97.0151921   1.8302895   0.232726   9.562153   2.94   6.0179066   3.1   10.8831327   10.0380922   1.8136426
+; this should be the same as O_b    O_h3o    H_h3o
+ OW    O_ah     H_a       -97.0151921   1.8302895   0.232726   9.562153   2.94   6.0179066   3.1   10.8831327   10.0380922   1.8136426
+
+[ exchange_charge_atomic ]
+ ; atomtype q
+  OW      -0.0895456
+  O_h3o   -0.0895456
+  HW       0.0252683
+  H_h3o    0.0252683
+  C_b      0.0
+  C_a      0.0  
+  S_b      0.229278
+  S_a      0.229278
+  O_b     -0.0895456
+  O_a     -0.0895456
+  O_ah    -0.0895456
+
+
+[ exchange_charge_proton ]
+; this is for the donating proton between molecule types
+; molecule1  molecule2   q
+  h3o      h2o        0.078018
+  h3o      so3        0.078018
+  so3h     h2o        0.078018
+
+; ********************* moleculetype section **************************
+
+[ moleculetype ]
+; name nrexcl
+so3h   3
+
+[ atoms ] 
+   1   C_a    15.035
+   2   S_a    32.06
+   3   O_a    16.0
+   4   O_a    16.0
+   5   O_ah   16.0
+   6   H_a     1.008
+
+[ bonds ]
+;  ai    aj funct         
+    1     2     2 
+    2     3     2
+    2     4     2
+    2     5     2
+    5     6     2  
+  
+
+[ angles ]
+;  ai    aj    ak funct       
+    1     2     3     2 
+    1     2     4     2
+    1     2     5     2
+    2     5     6     2
+
+
+[ dihedrals ]
+;  ai    aj    ak    al funct     
+    1     2     5     6     1 
+; need all three impropers here, so that potential doesn't depend on labels, as
+; labels can get shuffled around with proton donation
+    2     3     4     5     2    
+    2     4     5     3     2 
+    2     5     3     4     2
+
+
+[ moleculetype ]
+; name nrexcl
+so3   3
+
+[ atoms ] 
+   1   C_b    15.035
+   2   S_b    32.06
+   3   O_b    16.0
+   4   O_b    16.0
+   5   O_b    16.0
+
+[ bonds ]
+;  ai    aj funct         
+    1     2     2 
+    2     3     2
+    2     4     2
+    2     5     2
+  
+
+[ angles ]
+;  ai    aj    ak funct       
+    1     2     3     2 
+    1     2     4     2
+    1     2     5     2
+
+
+[ dihedrals ]
+;  ai    aj    ak    al funct  
+; need all three impropers here, so that potential doesn't depend on labels, as
+; labels can get shuffled around with proton donation
+    2     3     4     5     2    
+    2     4     5     3     2 
+    2     5     3     4     2
+
+
+[ moleculetype ]
+; name nrexcl
+h2o   3
+
+[ atoms ] 
+  1   OW    16.0
+  2   HW     1.008
+  3   HW     1.008
+
+[ bonds ]
+; atom1 atom2   ftp	b0	force constant
+1	2	1
+1	3	1
+
+[ angles ]
+; atom1 atom2 atom3 ftp  angle(degrees)     force constant
+2	1	3	1
+
+[ dihedrals ]
+
+
+[ moleculetype ]
+; name nrexcl
+h3o 3
+
+[ atoms ] 
+  1   O_h3o    16.0
+  2   H_h3o     1.008
+  3   H_h3o     1.008
+  4   H_h3o     1.008
+
+[ bonds ]
+; atom1 atom2   ftp	b0	force constant
+1	2	3
+1	3	3
+1	4	3
+
+[ angles ]
+; atom1 atom2 atom3 ftp  angle(degrees)     force constant
+2	1	3	1
+2	1	4	1
+3	1	4	1
+
+[ dihedrals ]
+
+
+
+; ********************* now special evb section section **************************
+; this section is for evb simulations, and details the topological connection
+; between acids and their conjugate bases
+[ evb_topology ]
+
+[ evb_pairs ]
+so3h   so3    H_a  O_ah
+
+[ acid_reactive_protons ] 
+; first label donating protons of acceptor with "1", else "0"
+   1   0
+   2   0
+   3   0
+   4   0
+   5   0
+   6   1
+
+[ base_reactive_protons ] 
+; in general, the base can have reactive protons as well (i.e. water)
+   1   0
+   2   0
+   3   0
+   4   0
+   5   0
+
+[ acid_acceptor_atoms ]
+; now label acceptor atoms of acid with "1", else "0"
+   1   0
+   2   0
+   3   1
+   4   1
+   5   1
+   6   0
+
+[ base_acceptor_atoms ]
+; now label acceptor atoms of base with "1", else "0"
+   1   0
+   2   0
+   3   1
+   4   1
+   5   1
+
+[ conjugate_atoms ]
+; now mapping of atom types between conjugate acid and base
+C_a   C_b
+S_a   S_b
+; important! the order of the next two lines must be retained.  This is because there is no 1-to-1 
+; mapping between the base-acid oxygen atoms, as the proton-oxygen must be uniquely specified
+; to remedy this, we specifically fill in the proton-oxygen atom using the correct atom type
+; stored in the evb_heavy_acid_index array.  Therefore, all other atoms should map to O_a , not
+; O_ah, and thus the O_a  O_b line should come last to overwrite the previous mapping.
+O_ah  O_b
+O_a   O_b
+
+
+
+[ evb_pairs ]
+h3o    h2o    H_h3o   O_h3o
+
+[ acid_reactive_protons ] 
+   1   0
+   2   1
+   3   1
+   4   1
+
+[ base_reactive_protons ] 
+   1   0
+   2   1
+   3   1
+
+[ acid_acceptor_atoms ]
+   1   1
+   2   0
+   3   0
+   4   0
+
+[ base_acceptor_atoms ]
+   1   1
+   2   0
+   3   0
+
+[ conjugate_atoms ]
+O_h3o   OW
+H_h3o   HW
+

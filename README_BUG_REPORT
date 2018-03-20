@@ -1,0 +1,10 @@
+ we encountered a strange bug compiling the similar MC code on pace.
+
+testing against neat acetone and acetonitrile, all th energies are correct against old benchmarks
+except the 3-body dispersion, which is way off
+compiling with flags
+OPT="-openmp -static -check bounds -check uninit -check format -warn declarations -traceback"
+fixes this, not sure what the source of the problem is
+
+so be careful with this compiled code...
+

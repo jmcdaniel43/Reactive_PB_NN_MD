@@ -1,0 +1,13 @@
+1) changed the code to allow general Born-Mayer repulsion between arbitrary atoms of proton donors and acceptor molecules in the EVB potential.
+
+2) BUG FIX:  the "force" array in subroutine ms_evb_intermolecular_repulsion of the ms_evb module was being defined as intent(out) rather than intent(inout).  This was fixed.  We tested that this bug did not manifest in different results.  This is probably because the force array was not allocatable, but rather was defined size.  Thus, it had the "right" initial values when passed to the subroutine, even though it was defined intent(out).
+
+3) very minor bug in subroutine read_conf.  If statement check on i_atom > MAX_N_ATOM was enclosed inside another if statement of n_mole > 0, so that this check didn't work if we only had one molecule.  Fixed this.
+
+4) added a check that all bond, angle, dihedral, pairs, triplets, and quartets, have corresponding force field parameters that have been read in
+
+5) added the ability to write velocities for checkpointing, and restart a trajectory from last printed coordinates and velocities.  This was checked by running a simulation of water, restarting every 100fs, printing velocities, and checking that the autocorrelation function was correct
+
+6) 10/26/2016:  added an anisotropic morse non-bond potential for close-range EVB interactions, along with the corresponding data structures and i/o routines.  Correct implementation of the potential was verified against a separate fitting code, and correct implementation of the forces was verified numerically.
+
+we are using the file "pair_int_test.f90" to test the vectorization of the inner loop of the LJ energy and force calculation.  This loop is not being vectorized, and i think this is significantly slowing down the code.  As of now, i can't figure out what is preventing the loop from being vectorized.
