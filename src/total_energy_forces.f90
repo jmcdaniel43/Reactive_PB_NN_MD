@@ -4,11 +4,8 @@
 module total_energy_forces
   use global_variables
   use MKL_DFTI
-  use electrostatic
   use pairwise_interaction
-  use explicit_three_body_interaction
   use pme_routines
-  use eq_drude
   use bonded_interactions
   use routines
 
@@ -47,15 +44,9 @@ contains
   !                interactions.  Any reciprocal space framework framework-framework interactions
   !                have been subtracted out
   !  
-  !  E_elec_nopol: This is the same as E_elec, but does not include Drude oscillator energies
   !
   !  E_bh:         This is all remaining pairwise additive energy ( either lennard-jones or buckingham
   !                type potentials mostly, but can possible include Feynman-Hibbs corrections ).
-  !
-  !  E_3body       This is explicit three body contributions to the energy, such as three body dispersion.
-  !                Note that while the induction energy is many-body as the Drude oscillators are 
-  !                optimized self-consistently, this isn't included in E_3body because after the 
-  !                oscillators are optimized, the energy is explicitly pairwise additive.
   !
   !
   !  iteration:    This gives the number of iterations used to converge the Drude oscillators
@@ -67,8 +58,6 @@ contains
   !                n_mole will equal tot_n_mole
   !
   !  n_atom:       This array gives the number of atoms for each molecule, not including drude oscillators
-  !
-  !  n_atom_drude: This array gives the number of atoms plus drude oscillators for each molecule
   !
   !  r_com:        This array contains the center of mass for each molecule in the system
   !
@@ -91,19 +80,17 @@ contains
   !
   !  log_file:     This is the file handle of one of the output files
   !
-  !  xyz_drude_final:    
-  !                This is the final position of the optimized Drude oscillators
   !
   !
   !              
   !
   !***********************************************************
-  subroutine calculate_total_force_energy( force_atoms, potential, E_elec,E_elec_nopol, E_bh, E_3body, E_bond, E_angle, E_dihedral, iteration, tot_n_mole, n_mole, n_atom, n_atom_drude, r_com, xyz, chg, box, dfti_desc,dfti_desc_inv,log_file,xyz_drude_final)
+  subroutine calculate_total_force_energy( force_atoms, potential, E_elec,  E_bh, E_bond, E_angle, E_dihedral, iteration, tot_n_mole, n_mole, n_atom, r_com, xyz, chg, box, dfti_desc,dfti_desc_inv,log_file)
     real*8, dimension(:,:,:),intent(out) :: force_atoms
-    real*8,intent(out) :: potential, E_elec, E_elec_nopol, E_bh, E_3body, E_bond, E_angle, E_dihedral
+    real*8,intent(out) :: potential, E_elec, E_bh, E_bond, E_angle, E_dihedral
     integer,intent(out) :: iteration
     integer,intent(in)::  tot_n_mole, n_mole
-    integer,dimension(:),intent(in)::  n_atom, n_atom_drude
+    integer,dimension(:),intent(in)::  n_atom
     real*8,dimension(:,:),intent(in)::  r_com
     real*8,dimension(:,:,:),intent(in)::  xyz
     real*8,dimension(:,:),intent(in)::  chg
@@ -125,8 +112,6 @@ contains
  
 
     !************************* check Verlet list, make sure it's updated ***********************
-    Select Case(use_verlet_list)
-    Case("yes")
        call update_verlet_displacements( n_mole, n_atom, xyz, box, flag_verlet_list )     
        ! if flag_verlet_list=0, verlet list is fine, if it's 1, we need to update verlet list, if 2, we need to reallocate
        Select Case(flag_verlet_list)
@@ -139,17 +124,11 @@ contains
           call construct_verlet_list(tot_n_mole, n_mole, n_atom, xyz, box )
           call update_verlet_displacements( n_mole, n_atom, xyz, box, flag_junk, 1 )
        End Select
-    End Select
     !***************************************************************************************
 
 
        !*********** Electrostatics *************
 
-!!!if there are drude oscillators, use scf_drude to optimize positions and compute energy
-!!!!!!!!!get energy of new config
-       if( drude_simulation .eq. 1 ) then
-             call scf_drude(E_elec,E_elec_nopol,force_atoms,xyz,chg,r_com,box,tot_n_mole,n_mole,n_atom,n_atom_drude,iteration,xyz_drude_final,dfti_desc,dfti_desc_inv,log_file)
-       else
 !!!! no drude oscillators
           iteration = 0
           xyz_drude_final=0d0
@@ -160,12 +139,10 @@ contains
              enddo
           enddo
 
-          call Electrostatic_energy_force( E_elec, force_atoms, drude_atoms,tot_n_mole, n_mole, n_atom, xyz, chg, box, r_com,dfti_desc,dfti_desc_inv)
+          call pme_energy_force(E_elec, force_atoms,drude_atoms,tot_n_mole,n_mole, n_atom, xyz, chg, box, r_com, dfti_desc,dfti_desc_inv)
 
           ! this variable is meaningless without oscillators, but just assign a value so compiler doesn't get angry
           E_elec_nopol = E_elec
-
-       endif
 
 
        !*** Lennard Jones/ Buckingham terms ****
@@ -190,20 +167,6 @@ contains
        force_atoms = force_atoms + lj_force
 
 
-     !******************************three-body-dispersion**************************************
-    Select Case(three_body_dispersion)
-    Case("yes")
-       ! construct linklist every time
-       call construct_linklist(box,tot_n_mole,n_mole,r_com)
-       ! calculate energy
-       call calculate_three_body_interaction(E_3body, xyz, r_com, n_atom, box)
-    Case("no")
-       E_3body = 0d0
-    End Select
-    !*****************************************************************************************
-
-
-
     !***************************** intra-molecular bond, angle energy and forces *****************
 
     !****************************timing**************************************!
@@ -225,7 +188,7 @@ contains
     ! doesn't depend on atomic positions
 
 
-    potential = E_elec + E_bh + E_3body + E_disp_lrc + E_bond + E_angle + E_dihedral
+    potential = E_elec + E_bh + E_disp_lrc + E_bond + E_angle + E_dihedral
 
 
 !!$    write(*,*) "elec, bh , bond, angle, dihedral"

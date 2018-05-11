@@ -1,11 +1,9 @@
 !***********************************************************************
 !
-!  This module contains various subroutines used in the Monte Carlo simulation,
-!  including data initialization subrouines, as well as subroutines that
-!  (for a Lennard-Jones type force field) read in the input files
+!  This module contains various initialization subroutines
 !
 !***********************************************************************
-module mc_routines
+module initialize_routines
   use routines
   use ms_evb
   implicit none
@@ -13,212 +11,177 @@ module mc_routines
 contains
 
   !*************************************************************************
-  ! this routine reads the input files for the solute, and if present, the framework
-  ! and initializes the simulation
+  ! this routine  initializes the simulation
   !*************************************************************************
-  subroutine initialize_simulation(box,n_mole,tot_n_mole,n_atom,n_atom_drude,xyz,mass,vel_atom, r_com,chg,chg_drude,tot_chg,ifile_conf, ifile_top, ifile_fconf,ifile_pmt, conf_file, traj_file, vel_file, ofile_traj)
+  subroutine initialize_simulation(system_data, molecule_data, atom_data, integrator_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
     use global_variables
-    use electrostatic
     use pairwise_interaction
     use pme_routines
     use bonded_interactions
-    character(MAX_FN),intent(in) :: ifile_conf,ifile_top, ifile_fconf,ifile_pmt, ofile_traj
-    integer, intent(in) :: conf_file, traj_file, vel_file
-    integer,intent(out)::n_mole,tot_n_mole
-    integer,dimension(:),intent(out)::n_atom,n_atom_drude
-    real*8,dimension(:,:,:),intent(out)::xyz, vel_atom
-    real*8,dimension(:,:),intent(out)::mass,chg,chg_drude,tot_chg
-    real*8,dimension(:,:),intent(out)::box,r_com
+    Type(system_data_type),intent(inout)                :: system_data
+    Type(molecule_data_type),dimension(:),intent(inout) :: molecule_data
+    Type(atom_data_type),intent(inout)                  :: atom_data
+    Type(integrator_data_type),intent(inout)            :: integrator_data
+    Type(file_io_data_type),intent(inout)               :: file_io_data
+    Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
+    Type(PME_data_type), intent(inout)                  :: PME_data
+
+    real*8, dimension(:,:), intent(inout) :: xyz
+    real*8, dimension(:,:), intent(inout) :: velocity
+    real*8, dimension(:,:), intent(inout) :: force
+    real*8, dimension(:),   intent(inout) :: mass
+    real*8, dimension(:),   intent(inout) :: charge
+    integer, dimension(:),  intent(inout) :: atom_type_index  
+    character(*)(:), intent(inout)        :: aname
+
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
+
     integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: gen_cross_terms
     real*8,dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,9) :: temp_lj_parameter
-    real*8,dimension(MAX_N_MOLE,MAX_N_ATOM) :: temp_chg
-    integer,dimension(MAX_N_MOLE,MAX_N_ATOM) :: atom_molecule_map
-    integer :: total_atoms_list
-    ! these are temporary atom name and molecule name data structures,
-    ! for general use in the program, global arrays atype_name, molecule_type_name will be used instead
-    character(MAX_MNAME), dimension(MAX_N_MOLE) :: molecule_name
-    character(MAX_ANAME), dimension(MAX_N_MOLE,MAX_N_ATOM) :: alist  
+    integer:: i_mole, total_atoms, size
 
-    integer:: i,i_mole,i_atom,n_type_s,index,is_overlap,size, flag_junk, flag_charge
-    real*8 :: unit_cell(3,3),sum_chg
-    real*8,dimension(3) :: inertia
-    real*8,parameter :: framework_chg_thresh = 1D-5 ,solute_chg_thresh = 1D-6 , small_stop=1d0, small_warn=1d-1
-    integer :: warn_inertia=0
 
-    ! zero this, in case we aren't reading velocities from a velocity checkpoint file
-    vel_atom=0d0
-
-    ! initialize random seed, this will be overwritten if seed is read in in read_conf routine
+    !********** this is for generating random velocities for Maxwell-Boltzmann
     call initialize_random_seed
+
+    ! **************************** read atom coordinates   ***********************************!
+
+    ! first get number of molecules, allocate datastructures
+    call read_gro_number_molecules( file_io_data%ifile_gro_file_h, file_io_data%ifile_gro, system_data%n_mole )
+
+    ! allocate molecule_data array
+    allocate( molecule_data(system_data%n_mole) )
+
+    ! now read gro file
+    ! this call will fill in data structures atom_data and molecule_data
+    ! open gro file as we may need to scan to end if restarting...
+    open( file_io_data%ifile_gro_file_h, file=file_io_data%ifile_gro, status='old' )
+
+    ! if trajectory restart, scan to end of .gro trajectory file...
+    Select Case( restart_trajectory )
+    Case("yes")
+       call scan_grofile_restart( file_io_data%ifile_gro_file_h, n_old_trajectory )
+    Case default
+
+    ! this will allocate aname, xyz arrays, and attach pointers from atom_data structure
+    call read_gro( file_io_data%ifile_gro_file_h, system_data, molecule_data, atom_data, aname, xyz )
+
+    ! ******************  Allocate remainder of atom_data target arrays, initialize, and attach pointers
+    total_atoms = system_data%total_atoms
+    allocate( velocity(3,total_atoms) )
+    allocate( force(3,total_atoms) )
+    allocate( mass(total_atoms) )
+    allocate( charge(total_atoms) )
+    allocate( atom_type_index(total_atoms) )
+
+    velocity=0d0;force=0d0;mass=0d0;charge=0d0; atom_type_index=0
+    atom_data%velocity=>velocity
+    atom_data%force=>force
+    atom_data%mass=>mass
+    atom_data%charge=>charge
+    atom_data%atom_type_index=>atom_type_index
+
+
+    ! if restarting, read in velocities from restart file
+    Select Case( restart_trajectory )
+    Case("yes")
+       call read_velocity_restart_checkpoint( file_io_data%ifile_velocity_file_h, file_io_data%ifile_velocity, atom_data%velocity, n_old_trajectory )
+    End Select
+
+
+    ! initialize the transformation matrix to box coordinates
+    call initialize_non_orth_transform ( system_data%box, system_data%xyz_to_box_transform )
+
+    !***************** make sure molecules are not broken up by a box translation, as this can happen in GROMACs, and could be using GROMACS output as input here
+    do i_mole=1,system_data%n_mole
+       ! set pointers for this data structure to target molecule
+       ! we will be just using xyz coordinates here
+       ! note we are changing global atom_data%xyz data structure with pointer !
+       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call fix_intra_molecular_shifts( molecule_data(i_mole)%n_atom, single_molecule_data%xyz , system_data%box,  system_data%xyz_to_box_transform )
+    enddo
+
+
+    !***************** make sure cutoff distances are fine for box size, and
+    !that box type is supported
+    call check_cutoffs_box( real_space_cutoff, verlet_list_data%verlet_cutoff, system_data%box )
+
 
     !************************************** get parameters****************************************************!
     ! get parameters for all atom types, assuming there are no more than MAX_N_ATOM_TYPE types of atoms total
-    ! remember no two atom names can conflict, not even those of framework and solute
     !*****************************************************************************************************!
-
-    call read_param( ifile_pmt,gen_cross_terms)
-
+    call read_param( file_io_data_type%ifile_ffpmt_file_h, file_io_data_type%ifile_ffpmt,gen_cross_terms)
     ! make sure we don't have too many atom types
     if ( n_atom_type > MAX_N_ATOM_TYPE ) then
        stop "number of atom types g.t. MAX_N_ATOM_TYPE.  Increase this value"
     endif
 
 
-    ! **************************** coordinates and box size************************************************!
-    ! zero n_atom array values that wont be used, as maxval(n_atom) will used to allocate an array later on
-    n_atom=0
-    n_atom_drude=0
-
-    Select Case( restart_trajectory )
-    Case("yes")
-       ! if this is a trajectory restart, get previous coordinates and velocities
-       call read_coordinates_restart_trajectory( traj_file, ofile_traj, n_mole, n_atom, xyz, molecule_name, alist, box, n_old_trajectory )
-       call read_velocity_restart_checkpoint( vel_file , velocity_file, n_mole, n_atom, vel_atom, n_old_trajectory )
-    Case default
-       ! open file here, as files won't be open in read_conf
-       open( conf_file, file=ifile_conf, status='old' )    
-       call read_conf( conf_file, n_mole, n_atom, xyz, molecule_name,alist, box )
-       close( conf_file )
-    End Select
-
-    ! if framework simulation,get framework coordinates
-    if (framework_simulation .eq. 1) then
-       call  read_fconf( ifile_fconf, n_mole, tot_n_mole, n_atom, xyz, temp_chg, flag_charge, alist, unit_cell )
-       ! if flag_charge is set to 1, charges have been read in from this file, and overwrite
-       ! those read in from the .pmt file.
-       box = unit_cell
-    else
-       flag_charge=0
-       tot_n_mole = n_mole
-    endif
-
-    ! initialize the transformation matrix to box coordinates
-    call initialize_non_orth_transform ( box )
-
-    !***************** make sure molecules are not broken up by a box translation, as this can happen
-    ! in GROMACs, and could be using GROMACS output as input here
-    do i_mole = 1, n_mole
-       call check_intra_molecular_shifts(i_mole,n_atom,xyz,box)
-    enddo
-
-    !****************** check to see that molecules are not too close together
-    is_overlap= check_move( xyz, tot_n_mole , n_mole, n_atom, box, r_com )
-
-
-    !***************** make sure cutoff distances are fine for box size, and that box type is supported
-    call check_cutoffs_box( box )
-
     ! ********************* generate cross terms and fill in parameter arrays****************************!
     ! fill in total parameter arrays that are stored in global_variables
-    call gen_param(alist,tot_n_mole,n_atom, chg, chg_drude,gen_cross_terms)
+    call gen_param( atom_data%aname, system_data%total_atoms, atom_data%charge, atom_data%atom_type_index, gen_cross_terms)
 
     ! now get special 1-4 interactions from parameter file if needed
-    call read_generate_14_interaction_parameters( ifile_pmt )
+    call read_generate_14_interaction_parameters( file_io_data%ifile_ffpmt )
 
     ! sort molecules into types
-    call gen_molecule_type_data( xyz, n_mole, n_atom, molecule_name, mass, r_com )
+    call gen_molecule_type_data( system_data%n_mole, molecule_data, atom_data )
 
     ! initialize mass to negative values to make sure we read all of these in
     atype_mass=-1d0
+
     ! read in topology information, zero molecule_exclusions here, as it is possible that
     ! exclusions are being read in from topology file
     molecule_exclusions=0
-    call read_topology_file( ifile_top )
+    call read_topology_file( file_io_data%ifile_top_file_h, file_io_data%ifile_top )
+
     ! mass is read in from topology file, fill in mass for each molecule
-    call fill_mass( tot_n_mole, n_atom, mass )
+    call fill_mass( system_data%total_atoms, atom_data%mass, atom_data%atom_type_index )
+
 
     ! center of mass
-    call update_r_com( xyz, n_mole, n_atom, mass, r_com )
-    ! if framework, update r_com for framework
-    if (framework_simulation .eq. 1) then
-       do i_mole = n_mole+1, tot_n_mole
-          r_com(i_mole,:) = xyz(i_mole,1,:)
-       end do
-    endif
+    call update_r_com( system_data%n_mole, molecule_data, atom_data )
     ! center of mass of molecule might be outside of box after calling subroutine check_intra_molecular_shifts, fix this
     do i_mole=1,n_mole
-       call shift_move(n_atom(i_mole),xyz(i_mole,:,:),r_com(i_mole,:),box)
+       ! set pointers for this data structure to target molecule
+       ! we will be just using xyz coordinates here
+       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call shift_move(molecule_data(i_mole)%n_atom,single_molecule_data%xyz,molecule_data(i_mole)%r_com,system_data%box, system_data%xyz_to_box_transform)
     enddo
+
 
     ! generate exclusions, note that some exclusions may have already been explicity read in
     ! from topology file.
     call generate_intramolecular_exclusions
 
 
-    if (electrostatic_type .ne. "none") then
-       ! warn if any solute molecules are charged
-!!$       do i_mole = 1, n_mole
-!!$          sum_chg=0d0
-!!$          do i_atom=1,n_atom(i_mole)
-!!$             sum_chg= sum_chg + chg(i_mole,i_atom)
-!!$          end do
-!!$          if ( abs(sum_chg) > solute_chg_thresh ) then
-!!$             write(*,*) "WARNING molecule ", i_mole," has total charge ", sum_chg
-!!$          endif
-!!$       enddo
-       ! check to make sure there is net zero charge in the unit cell, if we are using electrostatics
-       if (framework_simulation .eq. 1) then
-          sum_chg=0d0
-          do i_mole = n_mole+1, tot_n_mole
-             sum_chg= sum_chg + chg(i_mole,1)
-          end do
-          if ( abs(sum_chg) > framework_chg_thresh ) then
-             write(*,*) "total charge on framework is", sum_chg
-             stop " unit cell is not neutral! "
-          endif
-       endif
-    endif
+    !*********************************initialize verlet list
+    call allocate_verlet_list( verlet_list_data, system_data%total_atoms, system_data%volume )
+    call construct_verlet_list( verlet_list_data, atom_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
+    ! the "1" input to update_verlet_displacements signals to initialize the displacement array
+    call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data , system_data%box, system_data%xyz_to_box_transform , flag_junk, 1 )
 
-
-    ! make sure to store framework charges, and framework atom numbers
-    tot_chg = chg
-    n_atom_drude = n_atom
-    ! if simulation has drude oscillators, correct atom charges, and intialize mapping between
-    ! drude oscillators and their corresponding atoms
-    ! even if this is not a drude oscillator simulation, call this subroutine as it will
-    ! fill drude_atom_map trivially for the atoms, which will be used in screening functions
-    call initialize_drude_oscillators(tot_n_mole, n_mole, n_atom, n_atom_drude, tot_chg , chg_drude)
-
-
-    ! initialize verlet list if we are going to use it
-    Select Case(use_verlet_list)
-    Case("yes")
-       ! make sure MAX_N_MOLE is at least n_mole + 1, since we use verlet_point(n_mole+1) to
-       ! find finish position of verlet list for n_mole
-       if ( ( n_mole + 1 ) > MAX_N_MOLE ) then
-          write(*,*) "for verlet list, MAX_N_MOLE must be at least as big as "
-          write(*,*) "n_mole + 1"
-          stop
-       end if
-       call allocate_verlet_list( tot_n_mole, n_atom, tot_chg, box )
-       call construct_verlet_list(tot_n_mole, n_mole, n_atom, xyz, box )
-       ! the "1" input to update_verlet_displacements signals to initialize the displacement array
-       call update_verlet_displacements( n_mole, n_atom, xyz, box, flag_junk, 1 )
-    End Select
 
     ! initialize ms_evb simulation
     Select Case(ms_evb_simulation)
     Case("yes")
-       call initialize_evb_simulation( n_mole, n_atom, ifile_top )
+       call initialize_evb_simulation( system_data%n_mole, file_io_data )
        ! we are storing dQ_dr grid for ms-evb, allocate data arrays for this
 
-       ! note that if we are using a verlet list, we could use verlet_elec_atoms here.
-       ! we generate total_atoms_list to use here just in case we aren't using a verlet list
-       call generate_verlet_atom_index( total_atoms_list, atom_molecule_map, tot_n_mole, n_atom, tot_chg )
        ! grid size:  each atom has spline_order^3 non-zero derivatives in the Q grid
-       size = total_atoms_list * spline_order**3
+       size = system_data%total_atoms * spline_order**3
        ! size could be big depending on the system, make sure we don't ask for too much memory
        if ( size > 10000000 ) then
 	  write(*,*) "are you sure you want to store dQ_dr?  This requires allocating an array"
 	  write(*,*) " bigger than 3 x ", size
           stop
        end if
-       ! 5 indices for 2nd dimension of dQ_dr_index, for molecule index, atom index, and 3 Qgrid indices
        ! allocate column major
-       !allocate( dQ_dr(3,size), dQ_dr_index(5,size) )
        size=spline_order**3
-       allocate( dQ_dr(3,size,total_atoms_list) , dQ_dr_index(3,size,total_atoms_list) )
-       allocate(atom_list_force_recip(3,total_atoms_list) )
+       allocate( dQ_dr(3,size,system_data%total_atoms) , dQ_dr_index(3,size,system_data%total_atoms) )
+       allocate(atom_list_force_recip(3,system_data%total_atoms) )
     End Select
 
 
@@ -320,23 +283,7 @@ contains
           do i=1,erfc_grid
              erfc_table(i)= erfc(erfc_max/dble(erfc_grid)*dble(i))
           enddo
-          !         initialize g functions used in dispersion PME, by Kuang
-          do i = 1, gfun_grid
-             x = gfun_max/dble(gfun_grid)*dble(i)
-             exp_x2 = dexp(-x**2)
-             g6_table(i) = (x**4/2d0+x**2+1d0)*exp_x2
-             g8_table(i) = (x**6+3d0*x**4+6d0*x**2+6d0)/6d0*exp_x2
-             g10_table(i) = (x**8+4d0*x**6+12d0*x**4+24d0*x**2+24d0)/24d0*exp_x2
-             g12_table(i) = (x**10+5d0*x**8+20d0*x**6+60d0*x**4+120d0*x**2+120d0)/120d0*exp_x2
-             g14_table(i) = (x**12+6d0*x**10+30d0*x**8+120d0*x**6+360d0*x**4+720d0*x**2+720d0)/720d0*exp_x2
-          enddo
        end select
-
-!!!!!!!!!!!!!!!!!!pme will add framework reciprocal space electrostatic interactions, remove this here
-       Ewald_framework = 0D0
-       if(framework_simulation .eq. 1 ) then
-          call remove_framework_elec_recip( tot_n_mole, n_mole, n_atom, xyz, chg, box, dfti_desc,dfti_desc_inv )
-       endif
 
     end select
 
@@ -424,106 +371,17 @@ contains
 
 
 
-  !**************************************************!
-  ! this subroutine reads crystal framework coordinates
-  ! for a GCMC simulation
-  !
-  ! code detects whether one line is read for box vectors
-  ! for a cubic box, or three lines are read for a non-cubic box
-  !
-  ! this will also read charges if those are given after the coordinates.  This is detected
-  ! by the number of arguments on the atom line
-  !**************************************************!
-  subroutine read_fconf( ifile_fconf, n_mole, tot_n_mole, n_atom, xyz, chg, flag_charge, alist, box )
-    use routines
-    use global_variables
-    character(*),intent(in) :: ifile_fconf
-    character(*), dimension(:,:),intent(inout) :: alist
-    integer,intent(in)::n_mole
-    integer,intent(out)::tot_n_mole
-    integer,dimension(:),intent(inout)::n_atom
-    real*8,dimension(:,:,:),intent(inout)::xyz
-    real*8,dimension(:,:),intent(out) :: chg
-    integer  , intent(out)         :: flag_charge
-    real*8,dimension(3,3),intent(out)::box
-
-    real*8 :: tmp1, tmp2, tmp3
-    character(100) :: line
-    ! give args enough dimensions to accomodate all the arguments ( > 5) 
-    character(20),dimension(10)  :: args
-    integer:: file_h=15, i_mole, n_frwk_atoms,i, ios, nargs
-
-
-    ! need to modify this to account for new total_atoms variable
-    write(*,*) "need to modify read_fconf subroutine to account for total_atoms variable"
-    stop
-
-    open(unit=file_h,file=ifile_fconf,status="old")
-    read(file_h,*) n_frwk_atoms
-    ! see how many arguments are given on the atom line
-    read(file_h,'(A)') line
-    call parse( line," ", args, nargs )
-    backspace(file_h)
-
-    Select Case( nargs )
-    Case(4)
-       flag_charge=0
-    Case(5)
-       flag_charge=1
-    case default
-       write(*,*) "unrecognized file format in file ", ifile_fconf
-       stop
-    End Select
-    chg=0d0
-
-    do i_mole=1,n_frwk_atoms
-       Select Case( flag_charge )
-       Case(0)
-          ! no charges
-          read(file_h,*) alist( n_mole+i_mole,1),xyz(n_mole+i_mole,1,1),xyz(n_mole+i_mole,1,2),xyz(n_mole+i_mole,1,3)
-       Case(1)
-          !charges
-          read(file_h,*) alist( n_mole+i_mole,1), xyz(n_mole+i_mole,1,1),xyz(n_mole+i_mole,1,2),xyz(n_mole+i_mole,1,3), chg(n_mole+i_mole,1)
-       end Select
-       n_atom( n_mole+i_mole) = 1
-       call trim_end( alist( n_mole+i_mole,1) )
-    enddo
-
-    read(file_h,*) tmp1, tmp2, tmp3
-    read( file_h, *, iostat=ios ) box(2,1), box(2,2), box(2,3)
-    if ( ios < 0 ) then ! end of the file
-       box = 0.0d0
-       box(1,1) = tmp1
-       box(2,2) = tmp2
-       box(3,3) = tmp3
-    else
-       box(1,1) = tmp1
-       box(1,2) = tmp2
-       box(1,3) = tmp3
-       read( file_h, * ) box(3,1), box(3,2), box(3,3)
-    endif
-
-
-    close(file_h)
-
-    tot_n_mole = n_mole + n_frwk_atoms
-
-    if ( tot_n_mole > MAX_N_MOLE ) then
-       stop "please increase value of parameter MAX_N_MOLE in glob_v.f90 file to accomodate the size of your system"
-    endif
-
-  end subroutine read_fconf
-
 
   !**************************************************!
   ! this subroutine reads atom_type parameters from input file for a non SAPT-based force field
   !*************************************************
-  subroutine read_param( ifile_pmt, gen_cross_terms)
+  subroutine read_param( file_h, ifile_pmt, gen_cross_terms)
     use global_variables
-    character(*),intent(in)::ifile_pmt
+    integer, intent(in)    :: file_h
+    character(*),intent(in):: ifile_pmt
     integer,dimension(:,:),intent(out) :: gen_cross_terms
 
-    integer::file_h=15, i_type, j_type, i_param, n_cross, inputstatus,i_search,j_search,ind,ind1,ind2
+    integer::i_type, j_type, i_param, n_cross, inputstatus,i_search,j_search,ind,ind1,ind2
     character(MAX_ANAME):: atom1, atom2
     integer,parameter :: max_param=20
     real*8,parameter :: small=1D-6
@@ -581,33 +439,6 @@ contains
        ! move spaces for matching
        call trim_end( atype_name(i_type) )
     enddo
-
-    Select Case(framework_simulation)
-    Case(1)
-       stop "this code has been commented"
-!!$       ! get framework atom types
-!!$       do
-!!$          Read(file_h,'(A)',Iostat=inputstatus) line
-!!$          If(inputstatus < 0) Exit
-!!$          ind=INDEX(line,'framework_species')
-!!$          IF(ind .NE. 0) Exit
-!!$       enddo
-!!$       Read(file_h,'(A)',Iostat=inputstatus) line
-!!$       read(file_h,*) n_type_f
-!!$       do j_mole=1, n_type_f
-!!$          i_mole= n_type_s + j_mole
-!!$          ! make sure we are not exceeding array length
-!!$          if ( i_mole > MAX_N_ATOM ) then
-!!$             stop "number of atom type g.t. MAX_N_ATOM.  Increase this value"
-!!$          endif
-!!$          read(file_h,*) atype_name(i_mole),atype_chg(i_mole),atype_lj_parameter(i_mole,i_mole,1),atype_lj_parameter(i_mole,i_mole,2),atype_lj_parameter(i_mole,i_mole,3),atype_pol(i_mole)
-!!$       enddo
-!!$
-!!$       n_atom_type =n_type_f + n_type_s
-    Case(0)
-       ! no framework
-
-    End Select
 
 
     ! set up lj_bkghm_index array, in this case all atom pairs use the same potential
@@ -689,16 +520,15 @@ contains
   ! cross parameters will be created from these parameters
   ! 
   !*****************************************************!
-  subroutine gen_param(alist,tot_n_mole,n_atom, chg, chg_drude,gen_cross_terms)
+  subroutine gen_param(aname, total_atoms, charge, atom_type_index, gen_cross_terms)
     use global_variables
-    character(*), dimension(:,:),intent(in) :: alist
-    real*8, dimension(:,:),intent(out) :: chg, chg_drude
+    character(*), dimension(:),intent(in) :: aname
+    integer, intent(in)              :: total_atoms
+    real*8, dimension(:),intent(out) :: charge
+    integer, dimension(:), intent(in) :: atom_type
     integer,dimension(:,:),intent(in) :: gen_cross_terms
-    integer,dimension(:),intent(in):: n_atom
-    integer,intent(in)::tot_n_mole
 
-    integer:: i_param, j_param, i_mole , i_atom, ind, i_type,flag
-    real*8,parameter:: small = 1D-10
+    integer:: i_param, j_param, i_atom,i_type,flag
 
     ! if opls force field, we need to create C12 and C6 atomic terms first
     Select Case( lj_bkghm )
@@ -739,11 +569,10 @@ contains
     End Select
 
     ! now create atom index array that links atoms to parameters
-    do i_mole = 1, tot_n_mole
-       do i_atom =1, n_atom(i_mole)
+       do i_atom =1, total_atoms
           flag=0
           do  i_type=1, n_atom_type
-             if (atype_name(i_type) .eq. alist(i_mole,i_atom) ) then
+             if (atype_name(i_type) .eq. aname(i_atom) ) then
                 flag=1
                 i_param = i_type
                 exit 
@@ -751,31 +580,14 @@ contains
           enddo
           ! make sure all atom types have parameters
           if (flag .eq. 0 ) then
-             write(*,*) "atom type    ", alist(i_mole,i_atom), "doesn't have force field parameters!"
+             write(*,*) "atom type    ", aname(i_atom), "doesn't have force field parameters!"
              stop
           endif
 
           ! set index, chg, and polarizability
-          atom_index(i_mole,i_atom) = i_param
-          chg(i_mole,i_atom) = atype_chg(i_param)
-          chg_drude(i_mole,i_atom) = -sqrt(atype_pol(i_param)*springcon)
-
-          ! make sure all polarizabilities are zero if drude_simulation = 0 , so that input is consistent
-          Select Case(drude_simulation)
-          Case(0)
-             if ( abs( chg_drude(i_mole,i_atom) ) > small ) then
-                write(*,*)  ""
-                write(*,*)  " polarizability on atom ", i_atom , " on molecule ", i_mole
-                write(*,*)  " is non-zero, yet drude_simulation is set to 0 "
-                write(*,*)  " if you want to run a drude oscillator simulation, set "
-                write(*,*)  " drude_simulation to 1 ! "
-                write(*,*) ""
-                stop
-             endif
-          End Select
-
+          atom_type_index(i_atom) = i_param
+          charge(i_atom) = atype_chg(i_param)
        enddo
-    enddo
 
   end subroutine gen_param
 
@@ -870,80 +682,6 @@ contains
   end subroutine gen_C12_C6_epsilon_sigma
 
 
-  !***************************************************
-  !  This subroutine reads C9 coefficients for three body dispersion from
-  !  parameter file
-  !
-  !  for N atom types, the C9 coefficients should be input as follows:
-  !  There should be N + (N-1) + (N-2) ... lines (records) containing
-  !  C9 parameters.  These parameters are read in as 
-  !  loop (i=1, N)
-  !    loop ( j=i,N)
-  !      loop ( k=j,N)
-  !
-  !  where the parameters of the last loop are on one record,
-  !  and the first two loops account for the number of lines
-  !
-  !  these parameters should be given in units of (kJ/mol)*A^9, consistent with 
-  !  the rest of the parameters
-  !***************************************************
-  subroutine read_C9_three_body_dispersion_parameters(ifile_pmt)
-    use global_variables
-    character(*),intent(in) :: ifile_pmt
-
-    character(50)::line
-    integer :: i, j, inputstatus,ind, file_h=15, itype,jtype,ktype, ordered_index(3),store(3)
-
-    open(unit=file_h,file=ifile_pmt,status="old")
-
-    do
-       Read(file_h,'(A)',Iostat=inputstatus) line
-       If(inputstatus < 0) Exit
-       ind=INDEX(line,'three body dispersion')
-       IF(ind .NE. 0) Exit
-    enddo
-
-    ! if we didn't find the three body dispersion section in parameter file, then stop!
-    if ( ind .eq. 0 ) then
-       stop "couldn't find three body dispersion section in parameter input file"
-    endif
-
-    do itype = 1 , n_atom_type
-       do jtype = itype, n_atom_type
-          read(file_h,*) ( atype_3body_C9(itype,jtype,ktype),ktype=jtype, n_atom_type )
-       enddo
-    enddo
-
-    ! now fill in the rest of the array
-
-    do itype = 1 , n_atom_type
-       do jtype = 1 , n_atom_type
-          do ktype =1 , n_atom_type
-
-             store(1)=itype; store(2)=jtype; store(3)=ktype
-             ! need to arrange these indices in increasing order.  Probably better ways to do this but...
-             do i=1,3
-                ordered_index(i) = min( store(1), store(2), store(3) )
-
-                ! now give this index a higher value so we can keep using min() function
-                do j=1,3
-                   if ( store(j) .eq. ordered_index(i) ) then
-                      store(j) = n_atom_type + 1
-                      exit
-                   endif
-                enddo
-             enddo
-
-             ! now fill in array with C9
-             atype_3body_C9(itype,jtype,ktype) = atype_3body_C9(ordered_index(1), ordered_index(2), ordered_index(3) )
-
-          enddo
-       enddo
-    enddo
-
-
-  end subroutine read_C9_three_body_dispersion_parameters
-
 
 
   !**************************************************
@@ -1003,69 +741,71 @@ contains
 
 
   !******************************************************!
-  ! this subroutine generates molecule_type arrays to be used for particle insertion
-  ! notice this only includes solute molecules, as this is all we need
-  !
+  ! this subroutine generates molecule_type arrays for force field
   ! this subroutine sets global variables:: n_molecule_type, molecule_type
   !*****************************************************!
-  subroutine gen_molecule_type_data( xyz, n_mole, n_atom, molecule_name, mass, r_com )
+  subroutine gen_molecule_type_data( n_mole, molecule_data, atom_data )
     use global_variables
     integer, intent(in) :: n_mole
-    integer, intent(in), dimension(:) :: n_atom
-    character(*),dimension(:),intent(in) :: molecule_name
-    real*8, intent(in), dimension(:,:) :: mass
-    real*8, intent(in), dimension(:,:) :: r_com
-    real*8, intent(in), dimension(:,:,:) :: xyz
+    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type(atom_data_type) , dimension(:), intent(in)    :: atom_data
 
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
     integer:: i_mole,j_mole,i_atom, old_type,count, flag_name
-
 
     ! first molecule type is first molecule in input file
     i_mole = 1
+    ! attach pointers to atom subarrays for 1st molecule
+    call return_molecule_block( single_molecule_data , atom_data, molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
     n_molecule_type = 1
-    do i_atom=1,n_atom(i_mole)
-       molecule_type(n_molecule_type,i_atom) = atom_index(i_mole,i_atom)
+    do i_atom=1, molecule_data(i_mole)%n_atom
+       molecule_type(n_molecule_type,i_atom) = single_molecule_data%atom_type_index(i_atom)
     enddo
     ! mark end
-    if ( n_atom(i_mole) < MAX_N_ATOM ) then
-       molecule_type(n_molecule_type,n_atom(i_mole)+1) = MAX_N_ATOM_TYPE + 1
-    end if
+    if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM_TYPE ) then
+       molecule_type(n_molecule_type,molecule_data(i_mole)%n_atom+1) = MAX_N_ATOM_TYPE + 1
+    endif
 
-    molecule_type_name(n_molecule_type)=molecule_name(i_mole)
+    molecule_type_name(n_molecule_type)=molecule_data(i_mole)%mname
     molecule_index(i_mole)= n_molecule_type
 
-    ! loop over all solute molecules
+    ! loop over rest of molecules
     do i_mole =2, n_mole
+    ! reattach pointers to atom subarrays for new molecule
+    call return_molecule_block( single_molecule_data , atom_data, molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+
        old_type =0
        flag_name=0
        ! loop over all stored molecule types to see if this solute molecule is a new type
        do j_mole =1, n_molecule_type
           ! see if same name
-          if ( molecule_type_name(j_mole) .eq. molecule_name(i_mole) ) then
+          if ( molecule_type_name(j_mole) .eq. molecule_data(i_mole)%mname ) then
              flag_name = 1
           end if
 
           ! now check to see if they have same number of atoms
-          do i_atom =1, MAX_N_ATOM
+          do i_atom =1, MAX_N_ATOM_TYPE
              if( molecule_type(j_mole,i_atom) .eq. MAX_N_ATOM_TYPE + 1) exit
              count = i_atom
           enddo
-          if( n_atom(i_mole) .eq. count) then
+          if( molecule_data(i_mole)%n_atom .eq. count) then
              do i_atom=1, n_atom(i_mole)
-                if (atom_index(i_mole,i_atom) .ne. molecule_type(j_mole,i_atom)) then
+                if ( single_molecule_data%atom_type_index(i_atom) .ne. molecule_type(j_mole,i_atom)) then
                    goto 100
                 endif
              enddo
              ! make sure that we haven't just matched a smaller molecule to part of a larger molecule
-             if ( n_atom(i_mole) < MAX_N_ATOM ) then
-                if ( molecule_type(j_mole,n_atom(i_mole)+1 ) .ne. ( MAX_N_ATOM_TYPE + 1 ) ) then
+             if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM_TYPE ) then
+                if ( molecule_type(j_mole,molecule_data(i_mole)%n_atom+1 ) .ne. ( MAX_N_ATOM_TYPE + 1 ) ) then
                    goto 100
                 endif
              end if
              ! make sure these molecules have the same name to avoid confusion, note this is different on the name
              ! check at the beginning of the loop, because that checks to see if any previous molecule
              ! had the same name, not just this specific molecule
-             if ( molecule_type_name(j_mole) .ne. molecule_name(i_mole) ) then
+             if ( molecule_type_name(j_mole) .ne. molecule_data(i_mole)%mname ) then
                 stop "two identical  molecules have different names!"
              endif
 
@@ -1093,14 +833,14 @@ contains
              stop
           end if
 
-          do i_atom=1,n_atom(i_mole)
-             molecule_type(n_molecule_type,i_atom) = atom_index(i_mole,i_atom)
+          do i_atom=1,molecule_data(i_mole)%n_atom
+             molecule_type(n_molecule_type,i_atom) = single_molecule_data%atom_type_index(i_atom)
           enddo
           ! mark end
-          if ( n_atom(i_mole) < MAX_N_ATOM ) then
-             molecule_type(n_molecule_type,n_atom(i_mole)+1) = MAX_N_ATOM_TYPE + 1
+          if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM_TYPE ) then
+             molecule_type(n_molecule_type,molecule_data(i_mole)%n_atom+1 ) = MAX_N_ATOM_TYPE + 1
           end if
-          molecule_type_name(n_molecule_type) = molecule_name(i_mole)
+          molecule_type_name(n_molecule_type) = molecule_data(i_mole)%mname
           molecule_index(i_mole)= n_molecule_type
 
        endif
@@ -1115,78 +855,30 @@ contains
   ! this subroutine fills in mass data structure array
   ! using atom-type masses that are stored as global variables
   !***************************************
-  subroutine fill_mass( tot_n_mole, n_atom, mass )
+  subroutine fill_mass( total_atoms, mass, atom_type_index )
     use global_variables
-    integer, intent(in) :: tot_n_mole
-    integer,dimension(:),intent(in) :: n_atom
-    real*8,dimension(:,:),intent(out) :: mass
+    integer, intent(in) :: total_atoms
+    real*8,dimension(:),intent(out) :: mass
+    integer, intent(in) :: atom_type_index
 
-    integer :: i_mole, i_atom, i_type
+    integer :: i_atom, i_type
     real*8  :: mass_atom
 
-    do i_mole=1,tot_n_mole
-       do i_atom=1, n_atom(i_mole)
+       do i_atom=1, total_atoms
           ! get atom type
-          i_type = atom_index(i_mole,i_atom)
+          i_type = atom_type_index(i_atom)
           mass_atom = atype_mass(i_type)
           if ( mass_atom < 0d0 ) then
              write(*,*) "mass for atom type ", atype_name(i_type)
              write(*,*) "has not been read in from topology file"
              stop
           end if
-          mass(i_mole,i_atom) = mass_atom
+          mass(i_atom) = mass_atom
        enddo
-    enddo
 
   end subroutine fill_mass
 
 
 
 
-  !******************************************************!
-  ! this subroutine calculates reciprocal space framework electrostatic energy so that it can be subtracted out
-  ! in a GCMC simulation
-  !*****************************************************!
-  subroutine remove_framework_elec_recip( tot_n_mole, n_mole, n_atom, xyz, chg, box, dfti_desc,dfti_desc_inv )
-    use global_variables
-    use MKL_DFTI
-    use pme_routines
-    use electrostatic
-    integer, intent(in) :: n_mole,tot_n_mole
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: chg, box
-    real*8, intent(in), dimension(:,:,:) :: xyz
-    TYPE(DFTI_DESCRIPTOR),pointer,intent(in):: dfti_desc,dfti_desc_inv
-
-    real*8, dimension(:,:,:),allocatable :: xyz_framework
-    integer,dimension(:),allocatable :: n_atom_framework
-    real*8, dimension(:,:),allocatable :: chg_framework
-    real*8     :: Ewald_self_store
-    integer:: i_mole, n_framework
-
-    n_framework = tot_n_mole - n_mole
-
-
-    allocate(xyz_framework(n_framework,1,3),n_atom_framework(n_framework),chg_framework(n_framework,1))
-    n_atom_framework = 1
-
-    do i_mole =1, n_framework
-       xyz_framework(i_mole,1,:) = xyz(n_mole+i_mole,1,:)
-       chg_framework(i_mole,1) = chg(n_mole+i_mole, 1)
-    enddo
-
-
-    Ewald_framework = pme_recip( n_framework, n_atom_framework, xyz_framework, chg_framework, box, dfti_desc,dfti_desc_inv,1 )
-
-
-    Ewald_self_store = Ewald_self
-    call update_Ewald_self( n_framework, n_atom_framework, chg_framework )
-    Ewald_framework = Ewald_framework + Ewald_self
-
-    Ewald_self = Ewald_self_store
-
-  end subroutine remove_framework_elec_recip
-
-
-
-end module mc_routines
+end module initialize_routines

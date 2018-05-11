@@ -14,17 +14,11 @@ contains
 
   !***********************************************************************
   ! This subroutine computes lennard jones (buckingham) forces and energy
-  ! It is implemented for generic solute, as atom index array stores the type
-  ! of atom for each molecule, which is then used to recover LJ parameters in atype_lj_parameter array
-  ! also, storing framework atoms in tot_n_mole - n_mole indices allows solute framework interactions to
-  ! be calculated
-  !  As implemented, some forces are added to framework atom indices of force array for free due to Newton's 3rd law,
-  !  this is not important and does nothing.
   !
   ! we have removed some of the subroutine calls inside the loops and replaced these calls
   ! with explicit code to enhance performance
   !
-  ! Either verlet list or naive looping can be used
+  ! Always uses verlet list
   !***********************************************************************
   subroutine lennard_jones( lj_energy, lj_force, tot_n_mole, n_mole, n_atom, xyz, box, r_com)
     real*8,intent(out) :: lj_energy
@@ -42,11 +36,6 @@ contains
 
     lj_force=0d0
 
-    ! inter-molecular contributions
-    Select Case(use_verlet_list)
-    Case("no")
-       call  lennard_jones_no_verlet( lj_energy, lj_force, tot_n_mole, n_mole, n_atom, xyz, box, r_com)
-    Case("yes")
        ! here we need to map molecular data structures to atomic data structures that are
        ! consistent with the verlet list
        ! as these arrays are in inner loops, put innermost index first
@@ -58,7 +47,6 @@ contains
        ! map force back to molecular data structure
        call map_molecule_atom_data_structures_3d_a_to_m( tot_n_mole, n_atom, verlet_molecule_map_lj , atom_list_force , lj_force )
        deallocate( atom_list_xyz , atom_list_force, atom_list_atom_index )
-    End Select
 
     lj_cutoff2 = lj_cutoff ** 2
     ! now intra-molecular contributions
@@ -164,82 +152,6 @@ contains
 
 
   end  subroutine lennard_jones_use_verlet
-
-
-
-
-
-  !***********************************************************************
-  ! self-explanatory
-  !***********************************************************************
-  subroutine lennard_jones_no_verlet( lj_energy, lj_force, tot_n_mole, n_mole, n_atom, xyz, box, r_com)
-    use omp_lib
-    real*8,intent(out) :: lj_energy
-    real*8,dimension(:,:,:),intent(out)::lj_force
-    integer,intent(in)::n_mole,tot_n_mole
-    integer,dimension(:),intent(in)::n_atom
-    real*8,dimension(:,:,:),intent(in)::xyz
-    real*8,dimension(:,:),intent(in)::box
-    real*8,dimension(:,:),intent(in)::r_com
-    integer::i_mole,j_mole,i_atom,j_atom,atom_id1,atom_id2,i
-    integer :: split_do
-    real*8 :: lj_cutoff2, norm_dr2, norm_dr6, norm_dr12, term6, term12
-    real*8,dimension(3)::f_ij,rij,shift,shift_direct, dr_com,dr_direct
-
-    lj_force=0d0
-    lj_energy=0d0
-
-    lj_cutoff2 = lj_cutoff ** 2
-
-    ! decide how to split the parallel section
-    if (n_threads .eq. 1 ) then
-       split_do = 1
-    else
-       split_do = n_mole/n_threads+1
-    endif
-
-
-    !**************************************** no Verlet list, naive looping ***********************************************
-    call OMP_SET_NUM_THREADS(n_threads)
-
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(tot_n_mole,n_mole,r_com,box,n_atom,xyz,atom_index,atype_lj_parameter,lj_cutoff2,split_do,xyz_to_box_transform) REDUCTION(+:lj_force, lj_energy)
-    !$OMP DO SCHEDULE(DYNAMIC,split_do)
-    do i_mole=1,n_mole
-       do j_mole=i_mole+1,tot_n_mole
-          do i_atom=1,n_atom(i_mole)
-             do j_atom=1,n_atom(j_mole)
-                atom_id1 = atom_index(i_mole,i_atom)
-                atom_id2 = atom_index(j_mole,j_atom)
-                rij = xyz(i_mole,i_atom,:) - xyz(j_mole,j_atom,:)
-
-                dr_direct(:) = matmul( xyz_to_box_transform, rij )
-                do i=1,3
-                   shift_direct(i) = dble(floor( dr_direct(i) + 0.5d0 ))
-                enddo
-                shift = matmul( shift_direct , box )
-                rij = rij - shift
-                norm_dr2 = dot_product( rij, rij )  
-                if ( norm_dr2 < lj_cutoff2 ) then          
-                   norm_dr6 = norm_dr2 ** 3
-                   norm_dr12 = norm_dr6 ** 2
-                   ! at this stage, all lj parameters should be expressed as C12 and C6, even though they were read in as epsilon and sigma
-                   term12 = atype_lj_parameter(atom_id1,atom_id2,1) / norm_dr12
-                   term6 = atype_lj_parameter(atom_id1,atom_id2,2) / norm_dr6
-                   lj_energy = lj_energy + term12 - term6
-                   f_ij = rij / norm_dr2 * ( 12d0 * term12  - 6d0 * term6 )
-                   lj_force(i_mole,i_atom,:) = lj_force(i_mole,i_atom,:) + f_ij(:)
-                   lj_force(j_mole,j_atom,:) = lj_force(j_mole,j_atom,:) - f_ij(:)
-
-                end if
-             end do
-          end do
-       enddo
-    enddo
-    !$OMP END DO NOWAIT
-    !$OMP END PARALLEL
-
-
-  end  subroutine lennard_jones_no_verlet
 
 
 

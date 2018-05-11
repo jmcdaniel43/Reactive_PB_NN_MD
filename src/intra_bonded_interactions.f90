@@ -694,11 +694,11 @@ contains
   !  etc.. the force field parameter sections should be headed by
   !  [ bondtypes ] , [ angletypes ] , [ dihedraltypes ] , etc.
   !******************************************
-  subroutine read_topology_file( ifile_topology )
+  subroutine read_topology_file( file_h, ifile_topology )
     use global_variables
-    character(*),intent(in)::ifile_topology
+    integer, intent(in)    :: file_h
+    character(*),intent(in):: ifile_topology
 
-    integer :: file_h = 16
     integer :: nargs, ind, flag, flag_eof, i_mole
     integer :: flag_bondtypes , flag_angletypes , flag_dihedraltypes 
     integer,dimension(MAX_N_MOLE_TYPE) :: flag_moleculetype

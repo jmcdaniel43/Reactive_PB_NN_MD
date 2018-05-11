@@ -60,10 +60,9 @@ contains
   !************************
   ! initialization stuff involved with MS-EVB simulation
   !***********************
-  subroutine initialize_evb_simulation( n_mole, n_atom, ifile_top )
-    integer,intent(in) :: n_mole
-    integer, dimension(:),intent(in) :: n_atom   
-    character(*), intent(in) :: ifile_top
+  subroutine initialize_evb_simulation( n_mole, file_io_data )
+    integer, intent(in) :: n_mole
+    type(file_io_data_type), intent(in) :: file_io_data
 
     integer :: ios
     character(200) :: line
@@ -71,26 +70,26 @@ contains
     ! open file to print evb information.  If this trajectory is restarting, this file will be old
     Select Case(restart_trajectory)
     Case("yes")
-       open( ofile_hop_file_h, file=ofile_hop , status='old' )
+       open( file_io_data%ofile_hop_file_h, file=file_io_data%ofile_hop , status='old' )
        ! prepare this file to be appended to
        do   
-          read(ofile_hop_file_h, '(A)', iostat=ios ) line
+          read(file_io_data%ofile_hop_file_h, '(A)', iostat=ios ) line
           if ( ios < 0 ) Exit
        enddo
     case default
-       open( ofile_hop_file_h, file=ofile_hop , status='new' )
+       open( file_io_data%ofile_hop_file_h, file=file_io_data%ofile_hop , status='new' )
     End Select
 
     ! get evb parameters and topology information from .top file
-    call read_evb_parameters( ifile_top )
-    call read_evb_topology( ifile_top )
+    call read_evb_parameters( file_io_data%ifile_top_file_h, file_io_data%ifile_top )
+    call read_evb_topology( file_io_data%ifile_top_file_h, file_io_data%ifile_top )
 
 
     ! update hydronium molecule list
-    call update_hydronium_molecule_index( n_mole, n_atom, atom_index )
+    call update_hydronium_molecule_index( n_mole )
 
     ! check consistency
-    call evb_consistency_checks( n_mole, n_atom )
+    call evb_consistency_checks( )
 
 
     ! inform about ms evb parameters
@@ -113,10 +112,8 @@ contains
   ! this is now general, and applies to any molecule
   ! that is in its acidic state
   !************************
-  subroutine update_hydronium_molecule_index( n_mole, n_atom, atom_index_local )
+  subroutine update_hydronium_molecule_index( n_mole )
     integer,intent(in) :: n_mole
-    integer, dimension(:),intent(in) :: n_atom   
-    integer, dimension(:,:), intent(in) :: atom_index_local
 
     integer :: i_mole, i_type, i_hydronium
 
@@ -160,10 +157,7 @@ contains
   ! to allow easier use and manipulation of data structures.  This subroutine 
   ! checks for such requirements
   !*************************
-  subroutine evb_consistency_checks( n_mole, n_atom )
-    integer,intent(in) :: n_mole
-    integer, dimension(:),intent(in) :: n_atom
-
+  subroutine evb_consistency_checks( )
     integer              :: i_mole,i_atom,i_type, flag_h
     character(MAX_ANAME) :: atomname
 
@@ -188,33 +182,6 @@ contains
           end do loop2
        end if
     end do
-
-    ! can't use ms-evb with electrostatic cutoff, see comment below
-    ! we don't want to change the electrostatic cutoff routine to use atom-atom based cutoffs instead
-    ! of molecule-molecule based cutoffs, because atom-atom based cutoff without reciprocal space contribution
-    ! can cause severe artifacts due to the creation of ions from molecules
-    ! the ms-evb energy update routines use atom-atom based cutoffs, assuming pme, and so this would be
-    ! inconsistent, so we require pme to be used
-    !
-    ! however, we have commented the stop statement, because we might want to use a cutoff for cluster
-    ! calculations, in which case the cutoff should be large enough that this doesn't matter.  WARN
-    ! instead of stop
-    Select Case(electrostatic_type)
-    Case("cutoff")
-       write(*,*) "********************** WARNING *******************************************"
-       write(*,*) " PME is not being used.  This is dangerous for ms-evb simulation because "
-       write(*,*) " inconsistent cutoffs are being used in subroutines.  molecule-molecule based "
-       write(*,*) " cutoffs are used to calculate the total energy of the system, whereas  "
-       write(*,*) " atom-atom cutoffs are used to update ms-evb hamiltonian.  Therefore, this "
-       write(*,*) " should only be used for cluster calculations where the cutoff is large "
-       write(*,*) " enough that this doesn't matter"
-       write(*,*) "********************** WARNING ********************************************"
-       !write(*,*) "can't use subroutine ms_evb_diabat_force_energy with cutoff for electrostatics"
-       !write(*,*) "this is because this subroutine updates realspace electrostatics using atom-atom"
-       !write(*,*) "based cutoff, while the electrostatic cutoff subroutine uses molecule-molecule "
-       !write(*,*) "based cutoff"
-       !stop
-    End Select
 
 
   end subroutine evb_consistency_checks
@@ -303,8 +270,6 @@ contains
        deallocate( xyz_temp1, force_temp1, r_com_temp1, chg_temp1, mass_temp1, n_atom_temp1 )
 
        !******* if we're using verlet neighbor lists, we need to update these after a proton transfer
-       Select Case(use_verlet_list)
-       Case("yes")
           ! generate lennard jones verlet atom index
           call generate_verlet_atom_index( verlet_lj_atoms, verlet_molecule_map_lj, tot_n_mole, n_atom )
           ! generate electrostatic verlet atom index
@@ -312,7 +277,6 @@ contains
           call construct_verlet_list(tot_n_mole, n_mole, n_atom, xyz, box )  
           ! the "1" input to update_verlet_displacements signals to initialize the displacement array
           call update_verlet_displacements( n_mole, n_atom, xyz, box, flag_junk, 1 )
-       End Select
 
     endif
 
@@ -2058,9 +2022,6 @@ contains
           Case("pme") 
              call intra_pme_energy(E_intra,xyz,chg,i_mole,i_atom,j_atom,n_atom, molecule_index_local)
              call intra_pme_force(f_ij,xyz,chg,i_mole,n_atom,i_atom,j_atom, molecule_index_local)
-          Case("cutoff")
-             call intra_elec_energy(E_intra,xyz,chg,i_mole,i_atom,j_atom,n_atom, molecule_index_local)
-             call intra_elec_force(f_ij,xyz,chg,i_mole,n_atom,i_atom,j_atom, molecule_index_local)
           End Select
           E_elec_real = E_elec_real + E_intra
           force_atoms(i_mole,i_atom,:) = force_atoms(i_mole,i_atom,:) + f_ij(:)
@@ -2075,9 +2036,6 @@ contains
           Case("pme") 
              call intra_pme_energy(E_intra,xyz,chg,i_mole,i_atom,j_atom,n_atom, molecule_index_local)
              call intra_pme_force(f_ij,xyz,chg,i_mole,n_atom,i_atom,j_atom, molecule_index_local)
-          Case("cutoff")
-             call intra_elec_energy(E_intra,xyz,chg,i_mole,i_atom,j_atom,n_atom, molecule_index_local)
-             call intra_elec_force(f_ij,xyz,chg,i_mole,n_atom,i_atom,j_atom, molecule_index_local)
           End Select
           E_elec_real = E_elec_real + E_intra
           force_atoms(i_mole,i_atom,:) = force_atoms(i_mole,i_atom,:) + f_ij(:)
@@ -2445,7 +2403,7 @@ contains
        ! now compute Born-Mayer terms
        call ms_evb_born_mayer( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
        ! compute anisotropic morse interactions
-       call ms_evb_anisotropic_morse( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
+       !call ms_evb_anisotropic_morse( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
     end do
   end subroutine ms_evb_intermolecular_repulsion
 
@@ -3137,10 +3095,11 @@ contains
   ! as well as the transfering protons and acceptor atoms of each molecule
   ! and the mapping between atom types of donor and acceptor molecules
   !************************************
-  subroutine read_evb_topology( ifile_top )
+  subroutine read_evb_topology( file_h, ifile_top )
+    integer, intent(in)      :: file_h
     character(*), intent(in) :: ifile_top
 
-    integer :: file_h=16, flag_eof, flag
+    integer :: flag_eof, flag
     integer :: flag_evb_topology, flag_evb_pairs, flag_acid_reactive_protons, flag_base_reactive_protons, flag_acid_acceptor_atoms, flag_base_acceptor_atoms, flag_conjugate_atoms
     integer :: nargs, itype1, itype2, atype1, atype2, index1, count
     integer,parameter :: max_param=20
@@ -3317,10 +3276,11 @@ contains
   ! heading sections from topology file, and stores them in
   ! global data arrays
   !************************************
-  subroutine read_evb_parameters( ifile_top )
+  subroutine read_evb_parameters( file_h, ifile_top )
     character(*), intent(in) :: ifile_top
+    integer, intent(in)      :: file_h
 
-    integer :: file_h=16, flag_eof
+    integer :: flag_eof
     integer :: flag_evb_parameters, flag_donor_acceptor, flag_proton_acceptor, flag_anisotropic, flag_geometry_factor, flag_exchange_charge_atomic, flag_exchange_charge_proton, flag_reference_energy
     integer :: nargs, flag, count, itype1, itype2, itype3
     integer,parameter :: max_param=20
@@ -3450,45 +3410,45 @@ contains
 
 
     !**************************  anisotropic morse interaction
-    call read_file_find_heading( file_h, '[ anisotropic ]' , flag_anisotropic, flag_eof )
-    if ( flag_eof == -1 ) goto 100  ! end of file
-    call write_ms_evb_io_info( '[ anisotropic ]' )
-    flag_eof=0
-    count=1
-    do
-       call read_topology_line( file_h , input_string , flag )
-       ! if end of file
-       if ( flag == -1 ) then
-          flag_eof=-1
-          exit
-       end if
-       ! if end of section
-       if ( flag == 1 ) exit
-
-
-       if ( count > max_interaction_type ) stop "please increase value of 'max_interaction_type'"
-       call parse(input_string," ",args,nargs)
-       if ( nargs /= 7 ) stop "must have 7 arguments in 'anisotropic' section of [ evb_parameters ] section of topology file"
-       read(args(1),*) atomtype1
-       read(args(2),*) atomtype2
-       read(args(3),*) atomtype3
-       call trim_end(atomtype1)
-       call trim_end(atomtype2)
-       call trim_end(atomtype3)
-       call atype_name_reverse_lookup( atomtype1, itype1 )
-       call atype_name_reverse_lookup( atomtype2, itype2 )
-       call atype_name_reverse_lookup( atomtype3, itype3 )
-       ! fill in index for this interaction
-       evb_anisotropic_morse_interaction(count,1) = itype1
-       evb_anisotropic_morse_interaction(count,2) = itype2  
-       evb_anisotropic_morse_interaction(count,3) = itype3 
-       read(args(4),*) evb_anisotropic_morse_parameters(count,1)
-       read(args(5),*) evb_anisotropic_morse_parameters(count,2)
-       read(args(6),*) evb_anisotropic_morse_parameters(count,3)
-       read(args(7),*) evb_anisotropic_morse_parameters(count,4)
-       count = count + 1
-    enddo
-    if ( flag_eof == -1 ) goto 100  ! end of file
+!!$    call read_file_find_heading( file_h, '[ anisotropic ]' , flag_anisotropic, flag_eof )
+!!$    if ( flag_eof == -1 ) goto 100  ! end of file
+!!$    call write_ms_evb_io_info( '[ anisotropic ]' )
+!!$    flag_eof=0
+!!$    count=1
+!!$    do
+!!$       call read_topology_line( file_h , input_string , flag )
+!!$       ! if end of file
+!!$       if ( flag == -1 ) then
+!!$          flag_eof=-1
+!!$          exit
+!!$       end if
+!!$       ! if end of section
+!!$       if ( flag == 1 ) exit
+!!$
+!!$
+!!$       if ( count > max_interaction_type ) stop "please increase value of 'max_interaction_type'"
+!!$       call parse(input_string," ",args,nargs)
+!!$       if ( nargs /= 7 ) stop "must have 7 arguments in 'anisotropic' section of [ evb_parameters ] section of topology file"
+!!$       read(args(1),*) atomtype1
+!!$       read(args(2),*) atomtype2
+!!$       read(args(3),*) atomtype3
+!!$       call trim_end(atomtype1)
+!!$       call trim_end(atomtype2)
+!!$       call trim_end(atomtype3)
+!!$       call atype_name_reverse_lookup( atomtype1, itype1 )
+!!$       call atype_name_reverse_lookup( atomtype2, itype2 )
+!!$       call atype_name_reverse_lookup( atomtype3, itype3 )
+!!$       ! fill in index for this interaction
+!!$       evb_anisotropic_morse_interaction(count,1) = itype1
+!!$       evb_anisotropic_morse_interaction(count,2) = itype2  
+!!$       evb_anisotropic_morse_interaction(count,3) = itype3 
+!!$       read(args(4),*) evb_anisotropic_morse_parameters(count,1)
+!!$       read(args(5),*) evb_anisotropic_morse_parameters(count,2)
+!!$       read(args(6),*) evb_anisotropic_morse_parameters(count,3)
+!!$       read(args(7),*) evb_anisotropic_morse_parameters(count,4)
+!!$       count = count + 1
+!!$    enddo
+!!$    if ( flag_eof == -1 ) goto 100  ! end of file
 
 
 
@@ -3625,7 +3585,7 @@ contains
     call check_evb_read( flag_reference_energy, '[ reference_energy ]' )
     call check_evb_read( flag_donor_acceptor, '[ donor_acceptor ]' )
     call check_evb_read( flag_proton_acceptor, '[ proton_acceptor ]' )
-    call check_evb_read( flag_anisotropic, '[ anisotropic ]' )
+!    call check_evb_read( flag_anisotropic, '[ anisotropic ]' )
     call check_evb_read( flag_geometry_factor, '[ geometry_factor ]' )
     call check_evb_read( flag_exchange_charge_atomic, '[ exchange_charge_atomic ]' )
     call check_evb_read( flag_exchange_charge_proton, '[ exchange_charge_proton ]' )
