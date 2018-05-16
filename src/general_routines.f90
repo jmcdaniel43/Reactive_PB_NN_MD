@@ -633,34 +633,6 @@ contains
 
 
   !**************************************************************************
-  ! this function searches the error function grid, and picks out best value
-  ! this assumes all arguments are positive
-  !**************************************************************************
-  function erfc_g(x)
-    use global_variables
-    real*8::erfc_g
-    real*8,intent(in)::x
-
-    Select case (grid_erfc)
-    case("yes")
-       if(x > erfc_max) then
-          erfc_g=0D0
-          ! careful about calling erfc_table(0), rather call erfc_table(1)
-       elseif ( x > 0d0 ) then
-          erfc_g=erfc_table(ceiling(x/erfc_max*dble(erfc_grid)))
-       else
-          !here x=0
-          erfc_g = 1d0
-       endif
-    case("no")
-       erfc_g = erfc(x)
-    case default
-       stop "grid_erfc option not recognized"
-    end select
-
-  end function erfc_g
-
-  !**************************************************************************
   ! this function searches the B spline grids, and interpolates B_spline of a
   ! real number from the grids, the accuracy gained from using this subroutine is 
   ! probably not worth the extra time, but this subroutine is mainly for

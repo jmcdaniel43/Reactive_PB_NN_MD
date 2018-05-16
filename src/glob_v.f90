@@ -36,7 +36,6 @@ implicit none
   integer, parameter :: MAX_FN=100, MAX_ANAME=5, MAX_MNAME=5
 
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
-  character(3)  :: grid_erfc = "yes"        ! grid error function for pme
   character(3)  :: grid_Tang_Toennies ! grid damping functions
 
   character(3)  :: ms_evb_simulation="yes"   ! ms_evb

@@ -82,7 +82,7 @@ program main_ms_evb
   !************
 
 
-  call initialize_energy_force(log_file,box,n_mole,tot_n_mole,n_atom,n_atom_drude,xyz,r_com,mass,tot_chg,dfti_desc,dfti_desc_inv,iteration,potential,E_elec_nopol,E_elec,E_bh,E_3body,E_bond,E_angle,E_dihedral,xyz_drude,force_atoms)
+  call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
 
 
   Select Case( restart_trajectory )

@@ -1,4 +1,5 @@
 !***********************************************************************
+
 !
 !  This module contains various initialization subroutines
 !
@@ -171,7 +172,7 @@ contains
        ! we are storing dQ_dr grid for ms-evb, allocate data arrays for this
 
        ! grid size:  each atom has spline_order^3 non-zero derivatives in the Q grid
-       size = system_data%total_atoms * spline_order**3
+       size = system_data%total_atoms * PME_data%spline_order**3
        ! size could be big depending on the system, make sure we don't ask for too much memory
        if ( size > 10000000 ) then
 	  write(*,*) "are you sure you want to store dQ_dr?  This requires allocating an array"
@@ -179,9 +180,14 @@ contains
           stop
        end if
        ! allocate column major
-       size=spline_order**3
+       size=PME_data%spline_order**3
        allocate( dQ_dr(3,size,system_data%total_atoms) , dQ_dr_index(3,size,system_data%total_atoms) )
        allocate(atom_list_force_recip(3,system_data%total_atoms) )
+
+       ! setup pointers
+       PME_data%dQ_dr=>dQ_dr
+       PME_data%dQ_dr_index=>dQ_dr_index
+       PME_data%atom_list_force_recip=>atom_list_force_recip
     End Select
 
 
@@ -201,91 +207,83 @@ contains
   ! therefore these data structures were given the intent(inout) attribute
   !
   !**************************************************!
-  subroutine initialize_energy_force(log_file,box,n_mole,tot_n_mole,n_atom,n_atom_drude,xyz,r_com,mass,chg,dfti_desc,dfti_desc_inv,iteration,potential,E_elec_nopol,E_elec,E_bh,E_3body,E_bond,E_angle,E_dihedral,xyz_drude,force_atoms)
+  subroutine initialize_energy_force(system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     use global_variables
-    use electrostatic
     use pairwise_interaction
     use pme_routines
     use MKL_DFTI
     use total_energy_forces
-    integer,intent(in)::log_file
-    real*8,dimension(:,:),intent(inout)::chg
-    integer,intent(in)::n_mole,tot_n_mole
-    integer,dimension(:),intent(inout)::n_atom,n_atom_drude
-    real*8,dimension(:,:,:),intent(inout)::xyz
-    real*8,dimension(:,:),intent(in) :: box
-    real*8,dimension(:,:),intent(inout) :: r_com,mass
-    TYPE(DFTI_DESCRIPTOR), pointer,intent(out):: dfti_desc,dfti_desc_inv
-    integer,intent(out) :: iteration
-    real*8,intent(out) :: potential, E_elec_nopol, E_elec, E_bh, E_3body,E_bond,E_angle,E_dihedral
-    real*8, dimension(:,:,:),intent(out) :: xyz_drude,force_atoms
+    Type(system_data_type),intent(inout)                :: system_data
+    Type(molecule_data_type),dimension(:),intent(inout) :: molecule_data
+    Type(atom_data_type),intent(inout)                  :: atom_data
+    Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
+    Type(PME_data_type), intent(inout)                  :: PME_data
 
-    real*8, dimension(MAX_N_MOLE,MAX_N_ATOM,3) :: lj_force
-    integer,dimension(MAX_N_MOLE,MAX_N_ATOM)::drude_atoms
-    integer, dimension(MAX_N_MOLE) :: n_atom_junk
-    integer:: i,j,i_mole,i_atom,length(3),status
-    real*8 :: a(3), b(3), c(3), ka(3), kb(3), kc(3),kk(3,3),vol
+    integer:: i,length(3),status
+    real*8 :: a(3), b(3), c(3), ka(3), kb(3), kc(3),kk(3,3)
     real*8 :: x, exp_x2
-    integer :: ntype_solute, atom_id1
 
 
     !************************************* initialize ewald/pme ************************************************!
 
     ! note here that tot_chg was passed to this subroutine, so drude oscillator charges are accounted for
     ! if they are present.  Use n_atom_drude for Ewald_self, so that drude oscillators are included
-    call update_Ewald_self( tot_n_mole, n_atom_drude, chg )
+    call update_Ewald_self( system_data%total_atoms, atom_data, PME_data )
 
+    pme_grid=PME_data%pme_grid
 
-    Select Case(electrostatic_type)
-    Case("pme")
+    ! allocate arrays
+    allocate(CB(pme_grid,pme_grid,pme_grid),Q_grid(pme_grid,pme_grid,pme_grid),theta_conv_Q(pme_grid,pme_grid,pme_grid))
 
-       ! allocate arrays
-       allocate(CB(pme_grid,pme_grid,pme_grid),Q_grid(pme_grid,pme_grid,pme_grid),theta_conv_Q(pme_grid,pme_grid,pme_grid))
+    ! setup pointers
+    PME_data%CB=>CB
+    PME_data%Q_grid=>Q_grid
+    PME_data%theta_conv_Q=>theta_conv_Q
 
-       ! set up fourier transform descriptors
-       length=pme_grid
+    ! set up fourier transform descriptors
+    length(:)= pme_grid
+    status=DftiCreateDescriptor(PME_data%dfti_desc, DFTI_DOUBLE, DFTI_COMPLEX, 3, length)
+    status=DftiCommitDescriptor(PME_data%dfti_desc)
+    ! don't scale back transform because pick up factor of K^3 from convolution
+    status=DftiCreateDescriptor(PME_data%dfti_desc_inv, DFTI_DOUBLE, DFTI_COMPLEX, 3, length)
+    status=DftiCommitDescriptor(PME_data%dfti_desc_inv)
 
-       status=DftiCreateDescriptor(dfti_desc, DFTI_DOUBLE, DFTI_COMPLEX, 3, length)
-       status=DftiCommitDescriptor(dfti_desc)
-       ! don't scale back transform because pick up factor of K^3 from convolution
-       status=DftiCreateDescriptor(dfti_desc_inv, DFTI_DOUBLE, DFTI_COMPLEX, 3, length)
-       status = DftiCommitDescriptor(dfti_desc_inv)
+    ! compute CB array 
+    a(:) = box(1,:);b(:) = box(2,:);c(:) = box(3,:)
+    call crossproduct( a, b, kc ); kc = kc / system_data%volume_box 
+    call crossproduct( b, c, ka ); ka = ka / system_data%volume_box
+    call crossproduct( c, a, kb ); kb = kb / system_data%volume_box
+    kk(1,:)=ka(:);kk(2,:)=kb(:);kk(3,:)=kc(:)
 
+    call CB_array(PME_data%CB,PME_data%alpha_sqrt,system_data%volume_box,pme_grid,kk,PME_data%spline_order)
 
-!!!!!!!!!!!!!!! compute CB array 
-       a(:) = box(1,:);b(:) = box(2,:);c(:) = box(3,:)
-       vol = volume( a, b, c )
-       call crossproduct( a, b, kc ); kc = kc /vol 
-       call crossproduct( b, c, ka ); ka = ka /vol
-       call crossproduct( c, a, kb ); kb = kb /vol
-       kk(1,:)=ka(:);kk(2,:)=kb(:);kk(3,:)=kc(:)
-
-       call CB_array(CB,alpha_sqrt,vol,pme_grid,kk,spline_order)
-
-!!!!!!!!!!!!!!!!grid B_splines
-       if (spline_order .eq. 6) then
-          do i=1,spline_grid
-             B6_spline(i)=B_spline(6./dble(spline_grid)*dble(i),6)
-             B5_spline(i)=B_spline(5./dble(spline_grid)*dble(i),5)
+    ! grid B_splines
+       if (PME_data%spline_order .eq. 6) then
+          do i=1,PME_data%spline_grid
+             B6_spline(i)=B_spline(6./dble(PME_data%spline_grid)*dble(i),6)
+             B5_spline(i)=B_spline(5./dble(PME_data%spline_grid)*dble(i),5)
           enddo
-       else if (spline_order .eq. 4) then
-          do i=1,spline_grid
-             B4_spline(i)=B_spline(4./dble(spline_grid)*dble(i),4)
-             B3_spline(i)=B_spline(3./dble(spline_grid)*dble(i),3)
+       else if (PME_data%spline_order .eq. 4) then
+          do i=1,PME_data%spline_grid
+             B4_spline(i)=B_spline(4./dble(PME_data%spline_grid)*dble(i),4)
+             B3_spline(i)=B_spline(3./dble(PME_data%spline_grid)*dble(i),3)
           enddo
        else
           stop "requested spline order not implemented"
        endif
 
-       Select case(grid_erfc)
-       case("yes")
-!!!!!!!!!!!!!!!!grid complementary error function
-          do i=1,erfc_grid
-             erfc_table(i)= erfc(erfc_max/dble(erfc_grid)*dble(i))
-          enddo
-       end select
+    !  allocate, set pointer, and grid complementary error function
+    allocate(erfc_table(PME_data%erfc_grid))
+    ! make sure erfc_max is set big enough to cover distances up to the cutoff
+    if ( PME_data%erfc_max < PME_data%alpha_sqrt * real_space_cutoff ) then
+       write(*,*) "please increase setting of erfc_max.  Must have erfc_max > alpha_sqrt * cutoff "
+       stop
+    end if
 
-    end select
+    PME_data%erfc_table=>erfc_table
+    do i=1,PME_data%erfc_grid
+       erfc_table(i)= erfc(PME_data%erfc_max/dble(PME_data%erfc_grid)*dble(i))
+    enddo
 
     ! initialize factorial array
     call initialize_factorial
@@ -308,64 +306,17 @@ contains
           dTang_Toennies_table(4,i) = dTang_Toennies_damp(x,12)
        enddo
 
-       ! if three-body dispersion, grid 3rd order damping function
-       Select Case(three_body_dispersion)
-       Case("yes")
-          do i = 1, Tang_Toennies_grid         
-             x = Tang_Toennies_max/dble(Tang_Toennies_grid)*dble(i)
-             Tang_Toennies_table3(i) = Tang_Toennies_damp(x,3)
-          enddo
-       End Select
-
     End Select
-
-
-    !***************** initialize pme grid algorithm if using pme for dispersion ********************!
-
-    if ( pme_disp == "yes" ) then
-       !     the grid for long range dispersion interaction
-       !     Count number of atom types in solute molecule
-       stop " atype_solute data structure has been removed, and code below is commented "
-!!$       do ntype_solute = 1, n_atom_type
-!!$          if ( atype_solute(ntype_solute) == 0 ) then
-!!$             goto 999
-!!$          endif
-!!$       enddo
-!!$999    continue
-!!$       ntype_solute = ntype_solute - 1
-!!$
-!!$       allocate( lrdisp_pot(ntype_solute,pme_grid,pme_grid,pme_grid) )
-!!$       !     construct long-range dispersion grid
-!!$       lrdisp_pot = 0d0
-!!$       do atom_id1 = 1, ntype_solute
-!!$          call construct_recip_disp_grid(atom_id1,n_mole,tot_n_mole,n_atom,box,xyz,dfti_desc,dfti_desc_inv)
-!!$       enddo
-    endif
-
-
-    !  set long range correction and shifts
-    ! this is in case there is no framework. If there is a framework, disp_lrc is automatically set to zero for obvious reasons
 
 
     !**************************** Get initial forces and energy *************************************!
     Select Case(ms_evb_simulation)
     Case("yes")
-       call ms_evb_calculate_total_force_energy( force_atoms, potential, tot_n_mole, n_mole, n_atom, xyz, r_com, chg, mass, box, dfti_desc,dfti_desc_inv,log_file )
+       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     Case("no")
-       call calculate_total_force_energy( force_atoms,potential, E_elec,E_elec_nopol,E_bh, E_3body, E_bond,E_angle,E_dihedral,iteration, tot_n_mole, n_mole, n_atom, n_atom_drude, r_com, xyz, chg, box, dfti_desc,dfti_desc_inv,log_file,xyz_drude)
+       call calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     End Select
     !************************************************************************************************!
-
-
-    !**************** since this is initial energy calculation, it's important that drude oscillators converged, stop otherwise
-    Select Case(drude_simulation)
-    Case(1)
-       if ( iteration > iteration_limit ) then
-          stop "Drude oscillators did not converge in the initial energy calculation.  Check that variables force_threshold and iteration_limit have consistent settings in glob_v.f90."
-       endif
-    End Select
-
-
 
   end subroutine initialize_energy_force
 
