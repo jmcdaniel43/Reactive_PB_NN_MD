@@ -14,64 +14,51 @@ contains
   ! this subroutine returns the intra-molecular
   ! bond, angle, dihedral energy and force of the entire system
   !******************************************
-  subroutine intra_molecular_energy_force( E_bond, E_angle, E_dihedral , force_atoms, n_mole , n_atom, xyz )
+  subroutine intra_molecular_energy_force( system_data, molecule_data, atom_data )
     use global_variables
     use omp_lib
-    real*8, intent(out) :: E_bond, E_angle, E_dihedral
-    real*8, dimension(:,:,:), intent(inout) :: force_atoms
-    integer, intent(in) :: n_mole
-    integer, dimension(:), intent(in) :: n_atom
-    real*8, dimension(:,:,:),intent(in) :: xyz
+    type(system_data_type)   :: system_data
+    type(molecule_data_type) :: molecule_data
+    type(atom_data_type)     :: atom_data
 
-    integer :: i_mole
-    real*8 :: E_dihedral_mole
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
 
-    E_bond=0d0
-    E_angle=0d0
-    E_dihedral=0d0
+    integer :: i_mole, i_mole_type
+    real*8 , E_bond, E_angle , E_dihedral
 
-    ! this force array is cumulative, so will be updated by the bond, angle, etc. subroutines
-    ! at this point, it should contain contributions from non-bond terms
-
-    ! bond energy, force
-    do i_mole=1,n_mole
-       call intra_molecular_bond_energy_force( E_bond, i_mole, force_atoms, n_atom, molecule_index, atom_index, xyz )
-    enddo
-
-    ! angle energy, force
-    do i_mole=1,n_mole
-       call intra_molecular_angle_energy_force( E_angle, i_mole, force_atoms, n_atom, molecule_index, atom_index, xyz )
-    enddo
-
-    ! dihedral energy force
-    !****************************timing**************************************!
-    if(debug .eq. 1) then
-       call date_and_time(date,time)
-       write(*,*) "", "dihedral started at", time
-    endif
-    !***********************************************************************!
-    ! don't use connectivity information here to loop over dihedrals, because impropers might be defined using
-    ! non connected atoms
-
-    ! note that not all molecules have dihedrals, and those that do are probably in continuous indices,
-    ! so don't split loop into big chunks here
+    ! note that not all molecules have dihedrals, and those that do are probably
+    ! in continuous indices, so don't split loop into big chunks here
 
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,xyz,n_mole,molecule_index, n_atom, atom_index, force_atoms ) REDUCTION(+:E_dihedral)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:system_data%E_bond, system_data%E_angle, system_data%E_dihedral)
     !$OMP DO SCHEDULE(DYNAMIC,1)
-    do i_mole=1,n_mole
-       call intra_molecular_dihedral_energy_force( E_dihedral_mole, i_mole, force_atoms, n_atom, molecule_index, atom_index, xyz ) 
-       E_dihedral = E_dihedral + E_dihedral_mole
+    do i_mole = 1, system_data%n_mole
+
+       ! this is used to look up bonded force field parameters for this molecule
+       i_mole_type = molecule_data(i_mole)%molecule_type_index
+
+       ! set pointers for single_molecule_data to target molecule subarrays of atom_data
+       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+
+       ! bond energy, force for molecule
+       call intra_molecular_bond_energy_force( E_bond, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
+
+       ! angle energy, force for molecule
+       call intra_molecular_angle_energy_force( E_angle, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
+
+       ! dihedral energy, force for molecule
+       call intra_molecular_dihedral_energy_force( E_dihedral, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom ) 
+
+       system_data%E_bond = system_data%E_bond + E_bond
+       system_data%E_angle = system_data%E_angle + E_angle
+       system_data%E_dihedral = system_data%E_dihedral + E_dihedral
+
     enddo
     !$OMP END DO NOWAIT
     !$OMP END PARALLEL
 
-    !****************************timing**************************************!
-    if(debug .eq. 1) then
-       call date_and_time(date,time)
-       write(*,*) "dihedral finished at", time
-    endif
-    !***********************************************************************!
 
 
   end subroutine intra_molecular_energy_force
@@ -85,39 +72,34 @@ contains
   ! as is convention in this program, molecules
   ! are not split up over periodic boundaries
   !*************************************
-  subroutine intra_molecular_bond_energy_force( E_bond, i_mole, force_atoms, n_atom, molecule_index_local, atom_index_local, xyz ) 
+  subroutine intra_molecular_bond_energy_force( E_bond, single_molecule_data , i_mole_type , n_atom ) 
     use global_variables
-    real*8, intent(inout) :: E_bond
-    real*8,dimension(:,:,:),intent(inout) :: force_atoms
-    integer, intent(in) :: i_mole
-    integer, dimension(:), intent(in) :: n_atom
-    integer, dimension(:), intent(in) :: molecule_index_local
-    integer, dimension(:,:), intent(in) :: atom_index_local
-    real*8, dimension(:,:,:),intent(in) :: xyz
+    real*8, intent(out) :: E_bond
+    type(single_molecule_data_type) :: single_molecule_data
+    integer, intent(in) :: i_mole_type, n_atom
 
-    integer :: i_mole_type,i_atom_type, j_atom_type, i_atom, j_atom
+    integer :: i_atom_type, j_atom_type, i_atom, j_atom
     real*8, dimension(3) :: r_ij, force_ij
     real*8 :: r_mag, E_bond_ij
 
-    ! find the molecule type
-    i_mole_type = molecule_index_local(i_mole)
+    E_bond = 0d0
     ! loop over bond list for this molecule
-    do i_atom=1,n_atom(i_mole)
-       do j_atom=i_atom+1,n_atom(i_mole)
+    do i_atom=1,n_atom
+       do j_atom=i_atom+1,n_atom
           if ( molecule_bond_list(i_mole_type,i_atom,j_atom) == 1 ) then
              ! bond between these two atoms
-             i_atom_type = atom_index_local(i_mole,i_atom)
-             j_atom_type = atom_index_local(i_mole,j_atom)
+             i_atom_type = single_molecule_data%atom_type_index(i_atom)
+             j_atom_type = single_molecule_data%atom_type_index(j_atom)
 
-             r_ij(:) = xyz(i_mole,i_atom,:) - xyz(i_mole,j_atom,:)
+             r_ij(:) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
              r_mag = dsqrt( dot_product( r_ij , r_ij ) )
 
              call pairwise_bond_energy_force( E_bond_ij, force_ij, i_atom_type, j_atom_type, r_ij , r_mag )
 
              E_bond = E_bond + E_bond_ij 
 
-             force_atoms(i_mole,i_atom,:) = force_atoms(i_mole,i_atom,:) + force_ij(:)
-             force_atoms(i_mole,j_atom,:) = force_atoms(i_mole,j_atom,:) - force_ij(:)
+             single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) + force_ij(:)
+             single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) - force_ij(:)
 
           end if
        enddo
@@ -186,42 +168,36 @@ contains
   ! as is convention in this program, molecules
   ! are not split up over periodic boundaries
   !*************************************
-  subroutine intra_molecular_angle_energy_force( E_angle, i_mole, force_atoms, n_atom, molecule_index_local, atom_index_local, xyz ) 
+  subroutine intra_molecular_angle_energy_force( E_angle, single_molecule_data, i_mole_type, n_atom ) 
     use global_variables
-    real*8, intent(inout) :: E_angle
-    real*8,dimension(:,:,:),intent(inout) :: force_atoms
-    integer, intent(in) :: i_mole
-    integer, dimension(:), intent(in) :: n_atom
-    integer, dimension(:), intent(in) :: molecule_index_local
-    integer, dimension(:,:), intent(in) :: atom_index_local
-    real*8, dimension(:,:,:),intent(in) :: xyz
+    real*8, intent(out) :: E_angle
+    type(single_molecule_data_type) :: single_molecule_data
+    integer, intent(in) :: i_mole_type, n_atom
 
-    integer :: i_mole_type,i_atom_type, j_atom_type, k_atom_type, i_atom, j_atom, k_atom
+    integer :: i_atom_type, j_atom_type, k_atom_type, i_atom, j_atom, k_atom
     real*8, dimension(3) :: r_ij, r_kj, f_ij , f_kj
     real*8 :: E_angle_ijk
 
+    E_angle=0d0
 
-    ! find the molecule type
-    i_mole_type = molecule_index_local(i_mole)
     ! loop over angle list for this molecule
-    do i_atom=1,n_atom(i_mole)   ! outer atom
-       do k_atom=i_atom+1,n_atom(i_mole)  ! outer atom index > i_atom
-          do j_atom=1,n_atom(i_mole)  ! middle atom, loop over all indices
+    do i_atom=1,n_atom                    ! outer atom
+       do k_atom=i_atom+1,n_atom          ! outer atom index > i_atom
+          do j_atom=1,n_atom              ! middle atom, loop over all indices
              if ( molecule_angle_list(i_mole_type,i_atom,j_atom,k_atom) == 1 ) then
-                i_atom_type = atom_index_local(i_mole,i_atom)
-                j_atom_type = atom_index_local(i_mole,j_atom)
-                k_atom_type = atom_index_local(i_mole,k_atom)
+                i_atom_type = single_molecule_data%atom_type_index(i_atom)
+                j_atom_type = single_molecule_data%atom_type_index(j_atom)
+                k_atom_type = single_molecule_data%atom_type_index(k_atom)
 
-                r_ij(:) = xyz(i_mole,i_atom,:) - xyz(i_mole,j_atom,:)
-                r_kj(:) = xyz(i_mole,k_atom,:) - xyz(i_mole,j_atom,:)
+                r_ij(:) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
+                r_kj(:) = single_molecule_data%xyz(:,k_atom) - single_molecule_data%xyz(:,j_atom)
 
                 call trimer_angle_energy_force( E_angle_ijk, f_ij, f_kj, i_atom_type, j_atom_type, k_atom_type , r_ij, r_kj)
 
                 E_angle = E_angle + E_angle_ijk
-                force_atoms(i_mole,i_atom,:) = force_atoms(i_mole,i_atom,:) + f_ij(:)
-                force_atoms(i_mole,k_atom,:) = force_atoms(i_mole,k_atom,:) + f_kj(:)
-                force_atoms(i_mole,j_atom,:) = force_atoms(i_mole,j_atom,:) - f_ij(:) - f_kj(:)
-
+                single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) + f_ij(:)
+                single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:)
+                single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom)  - f_ij(:) - f_kj(:)
              end if
           end do
        end do
@@ -311,54 +287,49 @@ contains
   ! as is convention in this program, molecules
   ! are not split up over periodic boundaries
   !*************************************
-  subroutine intra_molecular_dihedral_energy_force( E_dihedral_molecule, i_mole, force_atoms, n_atom, molecule_index_local, atom_index_local, xyz )
+  subroutine intra_molecular_dihedral_energy_force( E_dihedral, single_molecule_data, i_mole_type, n_atom )
     use global_variables
-    real*8, intent(out) :: E_dihedral_molecule
-    real*8,dimension(:,:,:),intent(inout) :: force_atoms
-    integer, intent(in) :: i_mole
-    integer, dimension(:), intent(in) :: n_atom
-    integer, dimension(:), intent(in) :: molecule_index_local
-    integer, dimension(:,:), intent(in) :: atom_index_local
-    real*8, dimension(:,:,:),intent(in) :: xyz
-
-    integer :: i_mole_type,i_atom_type, j_atom_type, k_atom_type, l_atom_type, i_atom, j_atom, k_atom, l_atom
+    real*8, intent(out) :: E_dihedral
+    type(single_molecule_data_type) :: single_molecule_data
+    integer, intent(in) :: i_mole_type, n_atom
+    
+    integer :: i_atom_type, j_atom_type, k_atom_type, l_atom_type, i_atom, j_atom, k_atom, l_atom
     real*8,dimension(3) :: r_ji, r_kj, r_lk, f_ji, f_kj, f_lk
     real*8 :: E_dihedral_ijkl
 
 
-    E_dihedral_molecule=0d0
-    ! find the molecule type
-    i_mole_type = molecule_index_local(i_mole)
+    E_dihedral=0d0
     ! see if this molecule has any dihedrals
     if ( molecule_dihedral_flag( i_mole_type ) == 1 ) then
        ! loop over dihedral list for this molecule
-       do i_atom=1,n_atom(i_mole)  ! outer atom                 
-          do l_atom = i_atom+1, n_atom(i_mole)  ! outer atom, index greater than i_atom
+       do i_atom=1,n_atom        ! outer atom                 
+          do l_atom = i_atom+1, n_atom  ! outer atom, index greater than i_atom
              ! note we're not double counting angle terms here, even though j_atom and k_atom are
              ! looping over the same atoms, because the order matters for the dihedral potential
-             do j_atom=1,n_atom(i_mole)  ! inner atom
-                do k_atom=1,n_atom(i_mole) ! inner atom
+             do j_atom=1,n_atom         ! inner atom
+                do k_atom=1,n_atom      ! inner atom
 
                    if ( molecule_dihedral_list(i_mole_type,i_atom,j_atom,k_atom,l_atom) == 1 ) then
 
-                      i_atom_type = atom_index_local(i_mole,i_atom)
-                      j_atom_type = atom_index_local(i_mole,j_atom)
-                      k_atom_type = atom_index_local(i_mole,k_atom)
-                      l_atom_type = atom_index_local(i_mole,l_atom)
 
-                      r_ji(:) = xyz(i_mole,j_atom,:) - xyz(i_mole,i_atom,:)
-                      r_kj(:) = xyz(i_mole,k_atom,:) - xyz(i_mole,j_atom,:)
-                      r_lk(:) = xyz(i_mole,l_atom,:) - xyz(i_mole,k_atom,:)
+                      i_atom_type = single_molecule_data%atom_type_index(i_atom)
+                      j_atom_type = single_molecule_data%atom_type_index(j_atom)
+                      k_atom_type = single_molecule_data%atom_type_index(k_atom)
+                      l_atom_type = single_molecule_data%atom_type_index(l_atom)
 
+                      r_ji(:) = single_molecule_data%xyz(:,j_atom) - single_molecule_data%xyz(:,i_atom)
+                      r_kj(:) = single_molecule_data%xyz(:,k_atom) - single_molecule_data%xyz(:,j_atom)
+                      r_lk(:) = single_molecule_data%xyz(:,l_atom) - single_molecule_data%xyz(:,k_atom)
 
                       call quartet_dihedral_energy_force( E_dihedral_ijkl, f_ji, f_kj, f_lk, i_atom_type, j_atom_type, k_atom_type , l_atom_type, r_ji, r_kj, r_lk )
 
-                      E_dihedral_molecule = E_dihedral_molecule + E_dihedral_ijkl
+                      E_dihedral = E_dihedral + E_dihedral_ijkl
 
-                      force_atoms(i_mole,i_atom,:) = force_atoms(i_mole,i_atom,:) - f_ji(:)
-                      force_atoms(i_mole,j_atom,:) = force_atoms(i_mole,j_atom,:) + f_ji(:) - f_kj(:)
-                      force_atoms(i_mole,k_atom,:) = force_atoms(i_mole,k_atom,:) + f_kj(:) - f_lk(:)
-                      force_atoms(i_mole,l_atom,:) = force_atoms(i_mole,l_atom,:) + f_lk(:)
+
+                      single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) - f_ji(:)
+                      single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) + f_ji(:) - f_kj(:)
+                      single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:) - f_lk(:)
+                      single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) - f_lk(:)
 
                    endif
 

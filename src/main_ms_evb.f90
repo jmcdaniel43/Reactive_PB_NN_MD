@@ -41,7 +41,7 @@ program main_ms_evb
 
 
   !***** Local variables
-  integer :: i_step, i, j, sample_vel=1, iteration
+  integer :: i_step, trajectory_step
  
 
   call sort_input_files( file_io_data )
@@ -87,38 +87,35 @@ program main_ms_evb
 
   Select Case( restart_trajectory )
   Case("no")
-     call sample_atomic_velocities(n_mole, n_atom, mass, vel_atom )
+     call sample_atomic_velocities(system_data%n_mole, system_data%total_atoms, system_data%temperature, molecule_data, atom_data )
   End Select
 
-  call calculate_kinetic_energy( new_KE, n_mole,n_atom,mass,vel_atom, constants%conv_kJmol_ang2ps2gmol )
-  vol= volume( box(1,:),box(2,:),box(3,:) )
+  call calculate_kinetic_energy( system_data%kinetic_energy, system_data%total_atoms, atom_data%mass, atom_data%velocity, constants%conv_kJmol_ang2ps2gmol )
 
   ! only print here if not a restart
   Select Case( restart_trajectory )
   Case("no")
-     call print_run_param( log_file , n_mole, vol )
-     call print_result( traj_file, log_file, n_mole, n_atom, xyz, box, 0, E_elec,E_elec_nopol,E_bh, E_3body, E_bond, E_angle, E_dihedral,potential,new_KE,vol )
+     i_step = 0
+     call print_simulation_info( file_io_data%ofile_log_file_h , system_data , integrator_data, verlet_list_data, PME_data )
+     call print_step( file_io_data%ofile_traj_file_h, file_io_data%ofile_log_file_h , i_step, system_data, integrator_data, molecule_data, atom_data )
   End Select
 
 
-
-  do i_step = 1, n_step
-
+  do i_step = 1, integrator_data%n_step
      trajectory_step = n_old_trajectory + i_step
 
-     call  mc_sample(box,iteration,tot_n_mole,n_mole,n_atom,n_atom_drude,xyz,xyz_drude,force_atoms,vel_atom,mass,r_com,potential, E_elec,E_elec_nopol,E_bh,E_3body,E_bond,E_angle,E_dihedral,tot_chg,dfti_desc,dfti_desc_inv,log_file)
+     call  mc_sample( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data )
 
-     if ( mod( i_step, n_output ) == 0 ) then
-        call calculate_kinetic_energy( new_KE, n_mole,n_atom,mass,vel_atom, constants%conv_kJmol_ang2ps2gmol )
-        vol= volume( box(1,:),box(2,:),box(3,:) )
-        call print_result( traj_file, log_file, n_mole, n_atom, xyz, box, trajectory_step, E_elec,E_elec_nopol,E_bh, E_3body, E_bond, E_angle, E_dihedral, potential,new_KE,vol )
+     if ( mod( i_step, integrator_data%n_output ) == 0 ) then
+        call calculate_kinetic_energy( system_data%kinetic_energy, system_data%total_atoms, atom_data%mass, atom_data%velocity, constants%conv_kJmol_ang2ps2gmol )
+        call print_step( file_io_data%ofile_traj_file_h, file_io_data%ofile_log_file_h , trajectory_step, system_data, integrator_data, molecule_data, atom_data )
      endif
 
      ! checkpoint velocities
      Select Case( checkpoint_velocity )
      Case("yes")
         if ( mod( i_step, n_step_velocity ) == 0 ) then    
-           call print_velocities_checkpoint( trajectory_step, vel_file, tot_n_mole, n_atom, vel_atom )
+           call print_velocities_checkpoint( file_io_data%ifile_velocity_file_h, i_step , integrator_data%delta_t, system_data , molecule_data , atom_data  )
         endif
      End Select
 

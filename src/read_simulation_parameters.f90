@@ -142,9 +142,6 @@ contains
 
     ! ********************************************* REQUIRED VARIABLES have no default values *******************************************
     ! Simulation_Methodology section
-    if( flag_ensemble .eq. 0 ) then
-       stop "variable ensemble has not been given a value under the Simulation Methodology section in simulation parameter input file"
-    endif
     if( flag_lj_bkghm .eq. 0 ) then
        stop "variable lj_bkghm has not been given a value, set to either '1' for buckingham or '2' for lennard jones (or 3 for a hybrid treatment)"
     endif
@@ -174,6 +171,10 @@ contains
     ! ******************************************* DEFAULT VALUES for some variables ****************************************************
     ! if these variables are not present in the simulation parameters input file, we try to set to standard settings
     ! note, these default settings will still be subject to consistency checks against the required variables further down
+
+    if( flag_ensemble .eq. 0 ) then
+       integrator_data%ensemble = 'NVE'
+    endif
 
     if ( flag_alpha_sqrt .eq. 0 ) then
        PME_data%alpha_sqrt= 0.3d0 ! in A^-1 , reasonable default value for Gaussian width parameter

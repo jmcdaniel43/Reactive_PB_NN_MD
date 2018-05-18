@@ -8,531 +8,19 @@ module pme_routines
   ! This module contains PME subroutines for energy and force
   ! pme routines use discrete fourier transforms in MKL library
   !
-  !  reference for the pme algorithm is
-  !  Essmann et al , J. Chem. Phys. 1995, 103, 8577-8593
+  ! the PME real space interactions are computed in the module
+  !            pair_int_real_space.f90
+  !
+  ! reference for the pme algorithm is
+  ! Essmann et al , J. Chem. Phys. 1995, 103, 8577-8593
   !*******************************************************************
 
 
 contains
 
 
-
-
-
-  !***********************************************************************
-  ! This calculates electrostatic energy and forces
-  ! using pme for reciprocal contribution
-  !
-  ! Global variables used but not changed
-  ! integer, parameter :: spline_order,pme_grid
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::CB
-  !
-  ! Global variables changed
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::Q_grid,theta_conv_Q
-  !
-  !***********************************************************************
-  subroutine  pme_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
-    use global_variables
-    use MKL_DFTI
-    use routines
-    use omp_lib
-    implicit none
-
-    Type(system_data_type),intent(inout)                :: system_data
-    Type(molecule_data_type),dimension(:),intent(inout) :: molecule_data
-    Type(atom_data_type),intent(inout)                  :: atom_data
-    Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
-    Type(PME_data_type), intent(inout)                  :: PME_data
-
-
-    integer :: i, i_atom
-    real*8 ::   Er, Ek, x, E_intra
-    
-
-    !****************************timing**************************************!
-    if(debug .eq. 1) then
-       call date_and_time(date,time)
-       write(*,*) "real space pme calculation started at", time
-    endif
-    !***********************************************************************!
-
-
-    !******************************** inter-molecular real-space interactions *******************************
-
-    !*******   pme real space energy and force subroutine
-    call pme_real_space_use_verlet( system_data , atom_data , verlet_list_data , PME_data )
-
-    !******************************** intra-molecular real-space interactions *******************************
-    do i_mole=1,n_mole
-       if(n_atom(i_mole) .gt. 1) then
-          do i_atom=1,n_atom(i_mole)-1
-             do j_atom=i_atom+1,n_atom(i_mole)
-                call intra_pme_energy(E_intra,xyz,chg,i_mole,i_atom,j_atom,n_atom, molecule_index)
-                Er = Er + E_intra
-                call intra_pme_force(f_ij,xyz,chg,i_mole,n_atom,i_atom,j_atom, molecule_index)
-                pme_force(i_mole,i_atom,:)=pme_force(i_mole,i_atom,:) + f_ij(:)
-                pme_force(i_mole,j_atom,:)=pme_force(i_mole,j_atom,:) - f_ij(:)                         
-
-                call intra_lennard_jones_energy_force( E_intra_lj, lj_force, i_mole, n_atom, molecule_index, atom_index,  xyz , lj_cutoff2 )
-                lj_energy = lj_energy + E_intra_lj
-             enddo
-          enddo
-       endif
-    enddo
-
-
-    !****************************timing**************************************!
-    if(debug .eq. 1) then
-       call date_and_time(date,time)
-       write(*,*) "real space part of pme calculation finished at", time
-    endif
-    !***********************************************************************!
-
-    !******************************** PME reciprocal space ***************************************!
-
-!!!!!!!!!!!!!!!!!!!!!!!remember pme_force array will be reordered after call to pme_force_recip based on target_atoms
-    call pme_force_recip(pme_force,target_atoms,tot_n_mole,n_mole, n_atom, xyz, chg, box, dfti_desc,dfti_desc_inv)
-    pme_force=pme_force * 0.52914D0 * 627.51D0 * 4.184D0 ! convert from e^2/A^2 to kJ/mol/A
-
-    Ek= pme_recip( tot_n_mole, n_atom, xyz, chg, box,dfti_desc,dfti_desc_inv, 0)
-    pme_energy = Ek + Er - Ewald_framework + Ewald_self
-    pme_energy = pme_energy * 0.52914D0 * 627.51D0 * 4.184D0 ! convert from e^2/A to kJ/mol
-
-    !****************************timing**************************************!
-    if(debug .eq. 1) then
-       call date_and_time(date,time)
-       write(*,*) "pme calculation finished at", time
-    endif
-    !***********************************************************************!
-
-
-  end subroutine  pme_energy_force
-
-
-
-
-  !***********************************************
-  ! this subroutine calculates the real space part of 
-  ! the pme energy using an atom-atom based verlet list
-  !
-  ! In this subroutine, the data structures have been changed from molecule based
-  ! data structures, to atom_list based data structures.  This is because we only want
-  ! to consider inter-molecular interactions between atoms that have non-zero
-  ! charges.  The indexing of atoms in the atom_list data structures
-  ! should be consistent with the indexing of atoms in the verlet list
-  !***********************************************************************
-  subroutine pme_real_space_use_verlet( system_data , atom_data , verlet_list_data , PME_data  )
-    use global_variables
-    use routines
-    use omp_lib
-    implicit none
-    type(system_data_type), intent(inout) :: system_data
-    type(atom_data_type), intent(inout)   :: atom_data
-    type(verlet_list_data_type) , intent(in) :: verlet_list_data
-    type(PME_data_type) , intent(in)         :: PME_data
-
-    !****** note the storage dimensions of these arrays, consistent with atom_data%force
-    real*8, dimension(3,size(atom_data%force(1,:))) :: local_force
-    real*8, dimension(3,size(atom_data%force(1,:)),n_threads) :: temp_force
-
-    !** this is data structure which contains all the necessary
-    !** data to compute pairwise interactions for neighbors and should be
-    !** allocated locally
-    type pairwise_neighbor_data_type
-      integer, dimension(:) , allocatable :: atom_index
-      real*8 , dimension(:,:) , allocatable :: xyz
-      real*8 , dimension(:,:) , allocatable :: dr
-      real*8 , dimension(:,:) , allocatable :: f_ij      
-      real*8 , dimension(:)   , allocatable :: dr2
-      ! these are force field parameters needed for interactions
-      real*8 , dimension(:)   , allocatable :: qi_qj   ! charge * charge
-      real*8 , dimension(:,:) , allocatable :: atype_lj_parameter  
-    end type pairwise_neighbor_data_type
-
-    Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_verlet , pairwise_neighbor_data_cutoff
-
-    integer , dimension(:) , allocatable    :: cutoff_mask
-    real*8, dimension(3,3)   :: box, xyz_to_box_transform
-    real*8                   :: ewald_cutoff2, erfc_value, alpha_sqrt, erf_factor, E_elec, E_vdw, E_elec_local , E_vdw_local
-    integer                  :: split_do, total_atoms, n_neighbors, n_cutoff, size_lj_parameter
-    integer :: i, i_atom, j_atom, thread_id, i_thread, verlet_start, verlet_finish, i_index
-    real*8, dimension(3)     :: xyz_i_atom(3)
-
-
-    E_elec=0d0
-    E_vdw =0d0
-    local_force = 0.D0
-    temp_force= 0.D0
-    ! real_space_cutoff is a global variable
-    ewald_cutoff2 = real_space_cutoff ** 2
-
-    ! store small data structures as local variable for convenience
-    total_atoms          = system_data%total_atoms
-    box                  = system_data%box
-    xyz_to_box_transform = system_data%xyz_to_box_transform 
-    alpha_sqrt           = PME_data%alpha_sqrt
-    erf_factor           =  2.D0*alpha_sqrt/constants%pi_sqrt
-    ! this is (maximum) number of parameters that we need for VDWs interaction
-    size_lj_parameter=size(atype_lj_parameter(1,1,:))
-
-    ! decide how to split the parallel section
-    if (n_threads .eq. 1 ) then
-       split_do = 1
-    else
-       split_do = total_atoms/n_threads+1
-    endif
-
-    !**************************************** use Verlet list ****************************************************************
-    call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data%xyz, atom_data%charge, total_atoms, box, temp_force, ewald_cutoff2, split_do , xyz_to_box_transform, size_lj_parameter, erf_factor, alpha_sqrt,verlet_list_data%verlet_point,verlet_list_data%neighbor_list, PME_data%erfc_table) REDUCTION(+:E_elec,E_vdw)
-    !$OMP CRITICAL
-    local_force = 0.D0
-    !$OMP END CRITICAL
-    !$OMP DO SCHEDULE(DYNAMIC,split_do)
-    ! note that in Verlet list, neighbors are only stored if j_atom > i_atom , for efficiency and to avoid double counting
-    do i_atom=1 , total_atoms
-
-       xyz_i_atom(:) = atom_data%xyz(:,i_atom)
-
-       verlet_start = verlet_list_data%verlet_point(i_atom)
-       i_index = i_atom + 1
-       verlet_finish = verlet_list_data%verlet_point(i_index) - 1
-       n_neighbors = verlet_finish - verlet_start
-
-       ! make sure there's at least one neighbor
-       if ( n_neighbors > 0 ) then
-
-          ! allocate data structure to store data for these neighbors
-          call allocate_pairwise_neighbor_data( pairwise_neighbor_data_verlet , n_neighbors, size_lj_parameter )
-          
-          ! group neighbor coordinates and parameters sequentially in array for vectorization
-          call gather_neighbor_data( i_atom, verlet_start , verlet_finish , verlet_list_data%neighbor_list, pairwise_neighbor_data_verlet, atom_data%xyz, atom_data%charge, atom_data%atom_type_index, atype_lj_parameter )
-
-          ! this loop should now perfectly vectorize...
-          do j_atom = 1 , n_neighbors
-             pairwise_neighbor_data_verlet%dr(:,j_atom) = xyz_i_atom(:) - pairwise_neighbor_data_verlet%xyz(:,j_atom)
-          enddo
-
-          ! PBC minimum image, this loop should now perfectly vectorize...
-          do j_atom = 1 , n_neighbors
-
-             ! shift for general box
-             !             dr_direct(:) = matmul( xyz_to_box_transform, rij )
-             !             do i=1,3
-             !                shift_direct(i) = dble(floor( dr_direct(i) + 0.5d0 ))
-             !             enddo
-             !             shift = matmul( shift_direct , box )
-
-             ! shift for orthorhombic box
-             do i=1,3
-                pairwise_neighbor_data_verlet%dr(i,j_atom) = pairwise_neighbor_data_verlet%dr(i,j_atom) -  box(i,i) * floor( pairwise_neighbor_data_verlet%dr(i,j_atom) / box(i,i) + 0.5d0 )
-             end do
-             pairwise_neighbor_data_verlet%dr2(j_atom) = dot_product( pairwise_neighbor_data_verlet%dr(:,j_atom), pairwise_neighbor_data_verlet%dr(:,j_atom) )
-          enddo
-
-
-          ! now check cutoff, and re-organize data structures
-          allocate( cutoff_mask(n_neighbors) )
-          cutoff_mask=0
-          n_cutoff=0
-          do j_atom = 1 , n_neighbors
-             if ( pairwise_neighbor_data_verlet%dr2(j_atom) < ewald_cutoff2 ) then
-                cutoff_mask(j_atom) = 1
-                n_cutoff = n_cutoff + 1
-             endif
-          enddo
-
-          ! now allocate datastructure for atoms within cutoff distance
-          ! allocate data structure to store data for these neighbors
-          call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff , n_cutoff, size_lj_parameter )
-          
-          ! transfer data from pairwise_neighbor_data_verlet to
-          ! pairwise_neighbor_data_cutoff using cutoff_mask
-          call apply_cutoff_mask( n_neighbors, pairwise_neighbor_data_cutoff, pairwise_neighbor_data_verlet, cutoff_mask )
-
-          ! deallocate old arrays that we don't need anymore
-          call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_verlet )
-          deallocate( cutoff_screen )
-
-
-          ! now calculate pairwise forces and energies for this atom and its neighbors         
-          ! all of these subroutines should vectorize...
-          call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,  pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max )  
-
-          E_elec = E_elec + E_elec_local
-          E_vdw  = E_vdw  + E_vdw_local
-
-
-          ! running addition of forces...
-          do i_index=1, n_cutoff
-             j_atom = pairwise_neighbor_data_cutoff%atom_index(i_index)
-             local_force(:,i_atom) =  local_force(:,i_atom) + pairwise_neighbor_data_cutoff%f_ij(:,i_index)
-             local_force(:,j_atom) =  local_force(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,i_index) 
-          enddo
-
-          ! deallocate old arrays that we don't need anymore
-          call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff)
-         
-       end if
-    end do
-
-    !$OMP END DO NOWAIT
-    thread_id = OMP_GET_THREAD_NUM()
-    temp_force(:,:,thread_id+1)= local_force(:,:)
-    !$OMP END PARALLEL
-
-
-    do i_thread=1,n_threads
-       atom_data%force = atom_data%force + temp_force(:,:,i_thread)
-    enddo
-
-    system_data%E_elec = E_elec
-    system_data%E_vdw = E_vdw
-
-
-    contains
-
-
-
-    !***** this subroutine gathers neighbor data from global atom_data array using the Verlet neighbor list
-    subroutine gather_neighbor_data( i_atom, verlet_start , verlet_finish , neighbor_list, pairwise_neighbor_data, xyz, charge, atom_type_index, atype_parameter )
-       integer, intent(in) :: i_atom , verlet_start, verlet_finish
-       integer, dimension(:), intent(in) :: neighbor_list
-       type(pairwise_neighbor_data_type) :: pairwise_neighbor_data
-       real*8, dimension(:,:) , intent(in) :: xyz
-       real*8, dimension(:)   , intent(in) :: charge
-       integer, dimension(:) , intent(in)  :: atom_type_index
-       integer, dimension(:,:,:) , intent(in) :: atype_parameter
-
-       integer :: j_verlet, j_atom, i_type, j_type, j_index
-       real*8  :: q_i , q_j
-
-       ! type of central atom i_atom
-       i_type = atom_type_index(i_atom)
-       ! charge of central atom i_atom
-       q_i = charge(i_atom)
-
-       j_index=1
-       ! loop over Verlet neighbors
-       do j_verlet=verlet_start, verlet_finish
-           j_atom = neighbor_list(j_verlet)
-           j_type = atom_type_index(j_atom)
-           q_j = charge(j_atom)
-
-           pairwise_neighbor_data%atom_index(j_index) = j_atom
-           pairwise_neighbor_data%xyz(:,j_index) = xyz(:,j_atom)
-           pairwise_neighbor_data%qi_qj(j_index) = q_i * q_j
-           pairwise_neighbor_data%atype_parameter(:,j_index) = atype_parameter(i_type,j_type,:)
-
-           j_index = j_index + 1
-       end do
-
-
-    end subroutine gather_neighbor_data
-
-   
-
-
-    !*********** this subroutine uses the cutoff_mask to reorganize data structures and only keep the neighbor atoms within the cutoff distance
-    subroutine apply_cutoff_mask( n_neighbors, pairwise_neighbor_data_cutoff, pairwise_neighbor_data_verlet, cutoff_mask )
-      integer,intent(in) :: n_neighbors
-      type(pairwise_neighbor_data_type) , intent(out) :: pairwise_neighbor_data_cutoff
-      type(pairwise_neighbor_data_type) ,  intent(in) :: pairwise_neighbor_data_verlet
-      integer, intent(in) :: cutoff_mask
-
-      integer :: i_atom, i_index
-
-      i_index=1
-      do i_atom=1, n_neighbors
-         if ( cutoff_mask(i_atom) == 1 ) then
-            pairwise_neighbor_data_cutoff%dr(:,i_index) = pairwise_neighbor_data_verlet%dr(:,i_atom)
-            pairwise_neighbor_data_cutoff%dr2(i_index) = pairwise_neighbor_data_verlet%dr2(i_atom)
-            pairwise_neighbor_data_cutoff%qi_qj(i_index) = pairwise_neighbor_data_verlet%qi_qj(i_atom)
-            pairwise_neighbor_data_cutoff%atype_lj_parameter(:,i_index) = pairwise_neighbor_data_verlet%atype_lj_parameter(:,i_atom)
-         i_index = i_index + 1
-         endif
-      enddo
-
-    end subroutine apply_cutoff_mask
-
-
-
-
-    !****** these subroutines control allocatation/deallocation of local data structures
-    subroutine allocate_pairwise_neighbor_data( pairwise_neighbor_data , n_neighbors , size_lj_parameter )
-       type(pairwise_neighbor_data_type), intent(inout) ::  pairwise_neighbor_data
-       integer , intent(in)   :: n_neighbors
-
-       allocate( pairwise_neighbor_data%atom_index(n_neighbors) )
-       allocate( pairwise_neighbor_data%xyz(3,n_neighbors) )
-       allocate( pairwise_neighbor_data%dr(3,n_neighbors) )
-       allocate( pairwise_neighbor_data%f_ij(3,n_neighbors) )
-       allocate( pairwise_neighbor_data%dr2(n_neighbors) )
-       allocate( pairwise_neighbor_data%qi_qj(n_neighbors) )
-       allocate( pairwise_neighbor_data%atype_lj_parameter(size_lj_parameter , n_neighbors) )
-
-       ! zero forces
-       pairwise_neighbor_data%f_ij=0d0 
-
-    end subroutine allocate_pairwise_neighbor_data
-
-
-    subroutine deallocate_pairwise_neighbor_data( pairwise_neighbor_data )
-       type(pairwise_neighbor_data_type), intent(inout) :: pairwise_neighbor_data
-       deallocate( pairwise_neighbor_data%atom_index , pairwise_neighbor_data%xyz , pairwise_neighbor_data%dr , pairwise_neighbor_data%f_ij , pairwise_neighbor_data%dr2 , pairwise_neighbor_data%qi_qj ,  pairwise_neighbor_data%atype_lj_parameter )
-    end subroutine deallocate_pairwise_neighbor_data
-
-
-  end subroutine pme_real_space_use_verlet
-
-
-
-
-  !**************************************************
-  ! this subroutine computes the real space Ewald (PME) force and energy
-  ! contribution for pairwise interactions
-  !**************************************************
-  subroutine pairwise_real_space_ewald( E_elec , f_ij ,  dr, dr2, qi_qj,  erf_factor , alpha_sqrt, erfc_table , erfc_grid , erfc_max )
-     real*8, intent(out) :: E_elec
-     real*8, dimension(:), intent(inout) :: f_ij
-     real*8, dimension(:), intent(in)  :: dr2 , qi_qj
-     real*8, dimension(:,:), intent(in) :: dr
-     real*8, dimension(:), pointer, intent(in) :: erfc_table
-     integer, intent(in)                :: erfc_grid
-     real*8, intent(in)                 :: erfc_max, alpha_sqrt, erf_factor
-
-     real*8, dimension(size(dr2)) :: dr_mag, erfc_value
-     integer :: i_atom
-
-     dr_mag=sqrt(dr2)
-     ! make array with values of the complementary error function applied to alpha_sqrt * distance
-     erfc_value(:) = erfc_table(ceiling((dr_mag(:)*alpha_sqrt)/erfc_max*dble(erfc_grid)))
-
-     E_elec = sum( q_i_q_j / dr_mag * erfc_value )
-
-     ! this should vectorize...
-     do i_atom=1, size(f_ij)
-        f_ij(:,i_atom)  = f_ij(:,i_atom) + q_i_q_j(i_atom) * dr(:,i_atom) * (  erfc_value(i_atom) / dr2(i_atom) + erf_factor * exp(-(alpha_sqrt * dr_mag(i_atom)) **2) / dr_mag(i_atom) )
-     enddo
-
-  end subroutine pairwise_real_space_ewald
-
-
-
-
-  !****************************************************
-  ! this is for the reciprocal contribution
-  ! this function uses particle mesh ewald to compute electrostatic
-  ! energy. It uses cardinal B splines, which can be differentiated for
-  ! forces.  interfaced to MKL library for DFT
-  ! based on Essmann paper, J. Chem. Phys. 103 (19) 1995
-  ! definition of forward and backward dft in paper is reversed with definition
-  ! in MKL library
-  ! currently, this uses complex to complex FT, because real to complex
-  ! wasn't implemented in 3D when this was written
-  !
-  !  Q_change is an input variable that determines whether the Q_array needs updated (1), or not (0)
-  !  only input Q_change=0 if forces have already been calculated
-  !  If Q_change is zero, use Q array and theta_conv_Q from glob_v
-  !
-  ! Global variables used but not changed
-  ! integer, parameter :: spline_order,pme_grid
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::CB
-  !
-  ! Global variables changed
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::Q_grid,theta_conv_Q
-  !*****************************************************
-
-  real*8 function pme_recip( n_mole, n_atom, xyz, chg, box, dfti_desc,dfti_desc_inv,Q_change)
-    use global_variables
-    use MKL_DFTI
-    implicit none
-    integer, intent(in) :: n_mole,Q_change
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: chg, box
-    real*8, intent(in), dimension(:,:,:) :: xyz
-    TYPE(DFTI_DESCRIPTOR),pointer,intent(in):: dfti_desc,dfti_desc_inv
-    real*8, dimension(:,:,:),allocatable::xyz_scale
-    real*8 :: kk(3,3)
-    real*8 :: scale
-    integer::i,j,l,status,n,K  ! n is spline order, K is grid size
-    !*************even though arrays begin at index 1 for convenience, 1,1,1 corresponds to 0,0,0
-    complex*16,dimension(:,:,:),allocatable::FQ
-    real*8,dimension(:), allocatable::q_1r
-    complex*16,dimension(:), allocatable::q_1d
-    real*8, dimension(:,:), allocatable :: atom_list_xyz
-    real*8, dimension(:), allocatable :: atom_list_chg
-    integer,dimension(MAX_N_MOLE,MAX_N_ATOM) :: atom_molecule_map
-    integer :: total_atoms_list
-
-
-    !****************** if need to update Q_array
-    if(Q_change.ne.0) then
-
-       allocate(xyz_scale(n_mole,maxval(n_atom(:)),3),FQ(pme_grid,pme_grid,pme_grid), q_1r(pme_grid**3), q_1d(pme_grid**3))
-       n=spline_order
-       K=pme_grid
-       call construct_reciprocal_lattice_vector(kk, box)
-       ! create scaled coordinates
-       call create_scaled_direct_coordinates(xyz_scale, xyz, n_mole, n_atom, kk, K)
-
-
-       ! note that if we are using a verlet list, we can use the verlet list as the atom-molecule map
-       ! here, we generate a new map, in case we are not using a verlet list
-       call generate_verlet_atom_index( total_atoms_list, atom_molecule_map, n_mole, n_atom, chg )
-
-       ! Q grid will be constructed using atomic data storage for efficiency, convert data structures to this format
-       allocate( atom_list_xyz(3,total_atoms_list) , atom_list_chg(total_atoms_list) )
-       call map_molecule_atom_data_structures_3d_m_to_a( n_mole, n_atom , atom_molecule_map, atom_list_xyz , xyz_scale )
-       call map_molecule_atom_data_structures_2d_m_to_a( n_mole, n_atom , atom_molecule_map, atom_list_chg , chg ) 
-       ! grid_Q
-       call grid_Q(Q_grid,atom_list_chg,atom_list_xyz,K,n)
-       deallocate( atom_list_xyz, atom_list_chg )
-
-       q_1r=RESHAPE(Q_grid, (/K**3/) )
-       q_1d=cmplx(q_1r,0.,16)
-
-       status=DftiComputeForward(dfti_desc, q_1d)
-
-!!!!! need Finv(B*C)convoluted w/ Q
-!!!!! equals Finv(F(Finv(B*C) conv Q))
-!!!!! equals K**3*Finv(B*C*F(Q))
-
-       FQ=RESHAPE(q_1d, (/K,K,K/) )
-
-
-!!!!!!!multiply B*C*F(Q)
-       !FQ=FQ*cmplx(CB,0.,16)
-       FQ=FQ*CB
-
-!!!!!!! take Finv
-       q_1d=RESHAPE(FQ,(/K**3/) )
-       !  scale = 1.0D0/dble(K)**3
-
-
-       status = DftiComputeBackward(dfti_desc_inv, q_1d)
-       FQ=RESHAPE(q_1d, (/K,K,K/) )
-       theta_conv_Q=dble(FQ)
-
-       deallocate( FQ, q_1r, q_1d, xyz_scale )
-    endif
-
-    pme_recip=.5D0*sum((Q_grid*theta_conv_Q))
-
-
-    ! store the reciprocal space energy for ms-evb if needed
-    Select Case(ms_evb_simulation)
-    Case("yes")
-       E_recip=pme_recip
-    End Select
-
-  end function pme_recip
-
-
-
-
   !************************************************
-  ! This calculates electrostatic forces
+  ! This calculates recprocal-space, PME electrostatic energy and forces
   ! based on Essmann paper, J. Chem. Phys. 103 (19) 1995
   ! definition of forward and backward dft in paper is reversed with definition
   ! in MKL library
@@ -543,61 +31,38 @@ contains
   !
   ! Global variables changed
   ! real*8,dimension(pme_grid,pme_grid,pme_grid)::Q_grid,theta_conv_Q
-  !
-  !  There is an input array target_atoms, which specifies the atoms that forces should be calculated for.
-  !  This array has size n_mole, MAX_N_ATOM, and gives the atom labels of atoms for which forces are desired
-  !  The first zero entry in the ith row (for the ith molecule) tells the code when to move to the next molecule
-  !
-  !  The output is an array pme_force(molecule,atom,direction), where ordering of atoms in each molecule corresponds
-  !  to ordering in input array target_atoms, forces are derivatives w.r.t box coordinates, not scaled coordinates
-  !
   !
   !*************************************************
 
-  subroutine  pme_force_recip(pme_force,target_atoms,tot_n_mole,n_mole, n_atom, xyz, chg, box, dfti_desc,dfti_desc_inv)
+  subroutine pme_reciprocal_space_energy_force( system_data, molecule_data, atom_data, PME_data )
     use global_variables
     use MKL_DFTI
     use omp_lib
     implicit none
-    integer, intent(in) :: n_mole,tot_n_mole
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: box
-    real*8, intent(in), dimension(:,:) :: chg    
-    integer,intent(in), dimension(:,:) :: target_atoms
-    real*8,intent(inout),dimension(:,:,:):: pme_force
-    real*8, intent(in), dimension(:,:,:) :: xyz 
-    TYPE(DFTI_DESCRIPTOR),pointer,intent(in):: dfti_desc,dfti_desc_inv
-    real*8, dimension(:,:,:),allocatable::xyz_scale
-    real*8 :: a(3), b(3), c(3), ka(3), kb(3), kc(3),kk(3,3)
-    real*8 :: vol,scale,force(3)
-    integer::i,j,l,i_atom,i_mole,status,n,K  ! n is spline order, K is grid size
-!!!!!!!!!!!!!!!!!!!!!!!even though arrays begin at index 1 for convenience, 1,1,1 corresponds to 0,0,0
+    type(system_data_type)   :: system_data
+    type(molecule_data_type) :: molecule_data
+    type(atom_data_type)     :: atom_data
+    type(PME_data_type)      :: PME_data 
+
+    real*8, dimension(:,:),allocatable::xyz_scale
+    real*8 :: pme_Erecip, force(3)
+    integer:: i_atom, total_atoms, status, n , K
+    ! arrays begin at index 1 for convenience, 1,1,1 corresponds to 0,0,0
     complex*16,dimension(:,:,:),allocatable::FQ
     real*8,dimension(:), allocatable::q_1r
     complex*16,dimension(:), allocatable::q_1d
-    real*8, dimension(:,:), allocatable :: atom_list_xyz, atom_list_force
-    real*8, dimension(:), allocatable :: atom_list_chg
-    integer,dimension(MAX_N_MOLE,MAX_N_ATOM) :: atom_molecule_map
-    integer :: total_atoms_list
-    integer:: split_do, index_store
-    real*8 :: small=1D-6
-    !test
-    integer :: nq(3), save_nt
-    real*8,dimension(3) :: force_temp
-    real*8,dimension(3,MAX_N_ATOM,MAX_N_MOLE) :: test_force, xyz_scale1
-    real*8,dimension(MAX_N_ATOM,MAX_N_MOLE) :: test_chg
-    real*8,dimension(:,:),allocatable :: test_force1
+    integer:: split_do
 
+    ! define local variables for convenience
+    n=PME_data%spline_order
+    K=PME_data%pme_grid
+    total_atoms = system_data%total_atoms
 
+    call construct_reciprocal_lattice_vector(kk, system_data%box)
 
-    n=spline_order
-    K=pme_grid
-
-    call construct_reciprocal_lattice_vector(kk, box)
     ! create scaled coordinates
-    allocate(xyz_scale(tot_n_mole,maxval(n_atom(:)),3))
-    call create_scaled_direct_coordinates(xyz_scale, xyz, tot_n_mole, n_atom, kk, K)
-
+    allocate(xyz_scale(3,total_atoms))
+    call create_scaled_direct_coordinates(xyz_scale, atom_data%xyz, total_atoms, kk, K)
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -606,18 +71,8 @@ contains
     endif
     !************************************************************************!
 
-
-    ! note that if we are using a verlet list, we can use the verlet list as the atom-molecule map
-    ! here, we generate a new map, in case we are not using a verlet list
-    call generate_verlet_atom_index( total_atoms_list, atom_molecule_map, n_mole, n_atom, chg )
-
-    ! Q grid will be constructed using atomic data storage for efficiency, convert data structures to this format
-    allocate( atom_list_xyz(3,total_atoms_list) , atom_list_chg(total_atoms_list) )
-    call map_molecule_atom_data_structures_3d_m_to_a( n_mole, n_atom , atom_molecule_map, atom_list_xyz , xyz_scale )
-    call map_molecule_atom_data_structures_2d_m_to_a( n_mole, n_atom , atom_molecule_map, atom_list_chg , chg ) 
     ! grid_Q
-    call grid_Q(Q_grid,atom_list_chg,atom_list_xyz,K,n)
-    deallocate( atom_list_xyz, atom_list_chg )
+    call grid_Q(Q_grid,atom_data%charge,atom_data%xyz,K,n)
 
 
     !****************************timing**************************************!
@@ -627,7 +82,7 @@ contains
     endif
     !************************************************************************!
 
-    allocate( FQ(pme_grid,pme_grid,pme_grid), q_1r(pme_grid**3), q_1d(pme_grid**3) )
+    allocate( FQ(K,K,K), q_1r(K**3), q_1d(K**3) )
 
     q_1r=RESHAPE(Q_grid, (/K**3/) )
     q_1d=cmplx(q_1r,0.,16)
@@ -639,11 +94,11 @@ contains
     endif
     !************************************************************************!
 
-    status=DftiComputeForward(dfti_desc, q_1d)
+    status=DftiComputeForward(PME_data%dfti_desc, q_1d)
 
-!!!!! need Finv(B*C)convoluted w/ Q
-!!!!! equals Finv(F(Finv(B*C) conv Q)
-!!!!! equals K**3*Finv(B*C*F(Q))
+    !*** need Finv(B*C)convoluted w/ Q
+    !*** equals Finv(F(Finv(B*C) conv Q)
+    !*** equals K**3*Finv(B*C*F(Q))
 
 
     FQ=RESHAPE(q_1d, (/K,K,K/) )
@@ -655,7 +110,7 @@ contains
     endif
     !************************************************************************!
 
-!!!!!!!multiply B*C*F(Q)
+    !*multiply B*C*F(Q)
     ! FQ=FQ*cmplx(CB,0.,16)
     FQ=FQ*CB
 
@@ -667,12 +122,11 @@ contains
     !************************************************************************!
 
 
-!!!!!!! take Finv
+    !** take Finv
     q_1d=RESHAPE(FQ,(/K**3/) )
-    !  scale = 1.0D0/dble(K)**3
 
 
-    status = DftiComputeBackward(dfti_desc_inv, q_1d)
+    status = DftiComputeBackward(PME_data%dfti_desc_inv, q_1d)
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -686,17 +140,26 @@ contains
 
     deallocate( FQ, q_1r, q_1d )
 
-!!!!!!!!!! now compute forces for all desired atoms
-!!!!!!!!!! remember, pme_force is input with forces on all atoms, so have to adjust these just to 
-!!!!!!!!!! target atoms, so that you don't waste time taking derivatives
 
-    ! forces are not calculated on framework, so loop over n_mole, not tot_n_mole
+   !****** PME reciprocal space energy
+    pme_Erecip=.5D0*sum((Q_grid*theta_conv_Q))*constants%conv_e2A_kJmol   
+    system_data%E_elec =  system_data%E_elec + pme_Erecip
 
-    ! decide how to split the parallel section
+   
+   ! store the reciprocal space energy for ms-evb if needed
+    Select Case(ms_evb_simulation)
+    Case("yes")
+       PME_data%E_recip=pme_Erecip
+    End Select
+
+
+
+   !*** now compute forces on atoms
+   ! decide how to split the parallel section
     if (n_threads .eq. 1 ) then
        split_do = 1
     else
-       split_do = n_mole/n_threads+1
+       split_do = total_atoms/n_threads+1
     endif
 
     !****************************timing**************************************!
@@ -707,18 +170,15 @@ contains
     !************************************************************************!
 
 
-    ! notice these atom-based data structures are stored in column major order for looping over atom indices
-    allocate( atom_list_xyz(3,total_atoms_list), atom_list_force(3,total_atoms_list) , atom_list_chg(total_atoms_list) )
-    call map_molecule_atom_data_structures_3d_m_to_a( tot_n_mole, n_atom , atom_molecule_map, atom_list_xyz , xyz_scale )
-    call map_molecule_atom_data_structures_2d_m_to_a( tot_n_mole, n_atom , atom_molecule_map, atom_list_chg , chg )
-    atom_list_force=0d0
+    ! zero reciprocal space forces
+    PME_data%force_recip=0d0
 
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,theta_conv_Q,atom_list_xyz,atom_list_chg,K,box,n,kk,atom_list_force,spline_order,split_do) 
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,theta_conv_Q,PME_data%force_recip,atom_data%xyz,atom_data%charge,K,system_data%box,n,kk,split_do,constants%conv_e2A_kJmol) 
     !$OMP DO SCHEDULE(dynamic, split_do)
-    do i_atom=1,size(atom_list_force(1,:))
-       call derivative_grid_Q(force,theta_conv_Q,atom_list_chg,atom_list_xyz,i_atom,K,box,n,kk)
-       atom_list_force(:,i_atom)=atom_list_force(:,i_atom)+force(:)
+    do i_atom=1,total_atoms
+       call derivative_grid_Q(force, theta_conv_Q, atom_data%charge,atom_data%xyz,i_atom,K,system_data%box,n,kk,constants%conv_e2A_kJmol)
+       PME_data%force_recip(:,i_atom)=PME_data%force_recip(:,i_atom)+force(:)
     enddo
     !$OMP END DO NOWAIT
     !$OMP END PARALLEL
@@ -730,206 +190,19 @@ contains
     endif
     !************************************************************************!
 
-    ! store the reciprocal space force for ms-evb if needed
-    Select Case(ms_evb_simulation)
-    Case("yes")
-       atom_list_force_recip=atom_list_force
-    End Select
+    ! we've used the data structure force_recip to store these reciprocal space PME forces as we will use these in MS-EVB
+    atom_data%force = atom_data%force + PME_data%force_recip
 
-    ! map force back to molecule data structures
-    call map_molecule_atom_data_structures_3d_a_to_m( tot_n_mole, n_atom, atom_molecule_map, atom_list_force, pme_force, "add" )
+    deallocate(xyz_scale)
 
-    deallocate(xyz_scale, atom_list_xyz, atom_list_force, atom_list_chg)
-
-  end subroutine pme_force_recip
+  end subroutine pme_reciprocal_space_energy_force
 
 
-
-
-
-  !*******************************************
-  ! this subroutine computes the intra-molecular lennard jones force and energy
-  ! contribution
-  !*******************************************
-  subroutine intra_lennard_jones_energy_force( E_intra_lj , lj_force, i_mole, n_atom, molecule_index_local, atom_index_local, xyz, lj_cutoff2 )
-    use global_variables
-    real*8 , intent(out) :: E_intra_lj
-    real*8 , dimension(:,:,:),intent(inout) :: lj_force
-    integer, intent(in) :: i_mole
-    integer, dimension(:), intent(in) :: n_atom
-    integer, dimension(:), intent(in) :: molecule_index_local
-    integer, dimension(:,:), intent(in) :: atom_index_local
-    real*8, dimension(:,:,:), intent(in) :: xyz
-    real*8, intent(in) :: lj_cutoff2
-
-    integer :: i_atom, j_atom, i_mole_type, atom_id1, atom_id2
-    real*8, dimension(3) :: rij, f_ij
-    real*8 :: norm_dr2, norm_dr6, norm_dr12, term12, term6, C6, C12
-
-    E_intra_lj = 0d0
-
-    i_mole_type = molecule_index_local(i_mole)
-
-    do i_atom=1, n_atom(i_mole)
-       do j_atom = i_atom + 1, n_atom(i_mole)
-          ! check for exclusions
-          if ( molecule_exclusions( i_mole_type, i_atom, j_atom ) /= 1 ) then
-             ! not excluded
-             ! as always, molecules are not broken up over pbc, so no need to
-             ! consider shift
-
-             rij = xyz(i_mole,i_atom,:) - xyz(i_mole,j_atom,:)
-             norm_dr2 = dot_product( rij, rij )
-             if ( norm_dr2 < lj_cutoff2 ) then
-
-                norm_dr6 = norm_dr2 ** 3
-                norm_dr12 = norm_dr6 ** 2
-
-                atom_id1 = atom_index_local(i_mole,i_atom)
-                atom_id2 = atom_index_local(i_mole,j_atom)
-
-                ! at this stage, all lj parameters should be expressed as C12
-                ! and C6, even though they were read in as epsilon and sigma
-                ! if this is a 1-4 interaction, take parameters from 1-4
-                ! interaction parameter array
-                if ( molecule_exclusions( i_mole_type, i_atom , j_atom ) == 2 ) then
-                   C12 = atype_lj_parameter_14(atom_id1,atom_id2,1)
-                   C6  = atype_lj_parameter_14(atom_id1,atom_id2,2)
-                else
-                   C12 = atype_lj_parameter(atom_id1,atom_id2,1)
-                   C6  = atype_lj_parameter(atom_id1,atom_id2,2)
-                end if
-
-                term12 = C12 / norm_dr12
-                term6 =  C6 / norm_dr6
-
-                E_intra_lj = E_intra_lj + term12 - term6
-                f_ij = rij / norm_dr2 * ( 12d0 * term12  - 6d0 * term6 )
-                lj_force(i_mole,i_atom,:) = lj_force(i_mole,i_atom,:) + f_ij(:)
-                lj_force(i_mole,j_atom,:) = lj_force(i_mole,j_atom,:) - f_ij(:)
-
-
-             end if
-          end if
-       enddo
-    enddo
-
-
-  end subroutine intra_lennard_jones_energy_force
-
-
-
-
-
-  !************************************************
-  ! this subroutine removes intra-molecular energy contributions
-  !
-  ! use explicit erfc since r can be very small
-  !
-  ! Note that if we wish to subtract out the intra molecular interaction between two charges on top 
-  ! of each other, (suppose drude oscillators are directly on top of their corresponding atoms)
-  ! we need to subtract this contribution to the reciprocal space energy.  In the reciprocal
-  ! space contribution, there is a factor of 1/2 for overcounting, so this contribution is
-  !  1/2 * ( E12int + E21int ) = E12int , where E12int is charge 1 interacting with a gaussian
-  ! of charge 2 right underneath it.  This energy is then
-  ! 2 * q1 * q2 * ( alpha / pi ) ^ (1/2)  
-  ! note that this is a factor of 2 greater than the Ewald self correction, because there are two
-  ! interactions that we are accounting for, rather than one.
-  !************************************************
-
-  subroutine intra_pme_energy(E_intra,xyz,chg,i_mole,i_atom,j_atom,n_atom, molecule_index_local)
-    use global_variables
-    implicit none
-    real*8, intent(out):: E_intra
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: chg
-    real*8, intent(in), dimension(:,:,:) :: xyz
-    integer,intent(in)::i_mole,i_atom,j_atom
-    integer, dimension(:), intent(in) :: molecule_index_local
-
-    real*8,dimension(3)::rij
-    integer::i_drude,j_drude,n_pairs,sign_chg_i,sign_chg_j,flag_drudei,flag_drudej, flag_same_atom, i_mole_type
-    real*8::norm_dr,pol1,pol2
-    real*8,parameter::small=1D-8
-
-
-!!!!!!!!!!!!!! subtract unscreened interaction with total charge
-    rij(:) = xyz(i_mole,i_atom,:) - xyz(i_mole, j_atom,:)
-    norm_dr = sqrt( dot_product( rij, rij ) )
-    if(norm_dr < small) then
-       E_intra= - 2d0 * chg(i_mole,i_atom) * chg(i_mole,j_atom) * alpha_sqrt/sqrt(pi)
-    else
-       E_intra = chg(i_mole,i_atom) * chg(i_mole,j_atom) * (erfc(norm_dr*alpha_sqrt)-1.D0) / norm_dr
-    endif
-
-    ! add real space interaction if no exclusion between these atoms
-    i_mole_type = molecule_index_local(i_mole)
-    ! check for exclusions 
-    if ( molecule_exclusions( i_mole_type, i_atom, j_atom ) /= 1 ) then 
-       E_intra = E_intra + chg(i_mole,i_atom) * chg(i_mole,j_atom) / norm_dr
-    end if
-
-
-  end subroutine intra_pme_energy
-
-
-
-
-  !******************************************
-  ! this subroutine removes intra-molecular interactions
-  !
-  ! use explicit erfc since r can be very small
-  !******************************************
-  subroutine intra_pme_force(f_ij,xyz,chg,i_mole,n_atom,i_atom,j_atom, molecule_index_local)
-    use global_variables
-    implicit none
-    real*8, dimension(:), intent(out):: f_ij
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: chg
-    real*8, intent(in), dimension(:,:,:) :: xyz
-    integer,intent(in)::i_mole,i_atom,j_atom
-    integer, dimension(:), intent(in) :: molecule_index_local
-
-    real*8,dimension(3)::rij
-    integer::i_drude,j_drude,sign_chg_i,sign_chg_j,flag_drudei,flag_drudej, flag_same_atom, i_mole_type
-    real*8::norm_dr,pol1,pol2
-    real*8,parameter::small=1D-8
-
-
-!!!!!!!!!!!!remove unscreened interaction
-    rij(:) = xyz(i_mole,i_atom,:) - xyz(i_mole, j_atom,:)
-    norm_dr = sqrt( dot_product( rij, rij ) )
-    if(norm_dr > small) then
-       f_ij= chg(i_mole,i_atom) * chg(i_mole,j_atom) * rij * ( (erfc(norm_dr*alpha_sqrt)-1.D0) / norm_dr**3 + (2.D0*alpha_sqrt/sqrt(pi))*exp(-(alpha_sqrt*norm_dr)**2)/norm_dr**2)
-    else
-       f_ij=0.D0
-    endif
-
-
-    ! add real space interaction if no exclusion between these atoms
-    i_mole_type = molecule_index_local(i_mole)
-    ! check for exclusions 
-    if ( molecule_exclusions( i_mole_type, i_atom, j_atom ) /= 1 ) then 
-       f_ij = f_ij + chg(i_mole,i_atom) * chg(i_mole,j_atom) * rij / norm_dr**3
-    end if
-
-
-  end subroutine intra_pme_force
 
 
 
   !*****************************************************************
-  ! This subroutine interpolates charges onto Q grid to be used in pme reciprocal space
-  ! routines
-  !
-  !  4/15/15 : Note, we have changed this subroutine so that it uses atom-based storage
-  ! data arrays, rather than molecule-based storage data arrays.  Also, the atom-based data
-  ! arrays have been stored so that outer-loop runs over the last array index, to take
-  ! advantage of column-major memory storage in fortran
-  ! Also, at this point it is assumed that only atoms with non-zero charge are included in
-  ! data structures and thus we've removed the check on small charge
-  ! we have also changed loop over kvectors to loop over last index of Q_grid first,
-  ! to more efficiently pull from memory
+  ! This subroutine interpolates charges onto Q grid to be used in pme reciprocal space routines
   !*****************************************************************
   subroutine grid_Q(Q,chg,xyz,K,n)
     use global_variables
@@ -1093,7 +366,7 @@ contains
   !
   ! notice that this is being called in a parallel section of code
   !**************************************************
-  subroutine derivative_grid_Q(force,FQ,chg,xyz,i_atom,K,box,n,kk,flag_update)
+  subroutine derivative_grid_Q(force,FQ,chg,xyz,i_atom,K,box,n,kk,conv_e2A_kJmol, flag_update)
     use global_variables
     integer,intent(in)::K,n
     real*8,dimension(3),intent(out)::force
@@ -1102,7 +375,9 @@ contains
     real*8, intent(in), dimension(:) :: chg
     real*8,intent(in),dimension(3,3)::box,kk
     real*8, intent(in), dimension(:,:) :: xyz
+    real*8, intent(in)             :: conv_e2A_kJmol
     integer, intent(in), optional :: flag_update
+
     integer::i,j,k1,k2,k3,n1,n2,n3,nearpt(3)
     integer::g1n(3),g1nmin(3),g1(3),g2(3)
     real*8::fac(3),chg_i
@@ -1206,15 +481,12 @@ contains
                 endif
              endif
 
-             force=force + fac * FQ(n1+1,n2+1,n3+1)
+             force=force + fac * FQ(n1+1,n2+1,n3+1) * conv_e2A_kJmol  ! convert e^2/Ang to kJ/mol
 
 	     ! if we're storing dQ_dr,
              if ( .not. present(flag_update) ) then
                 Select Case(ms_evb_simulation)
                 Case("yes")
-                   !if ( index_store > size(dQ_dr(:,1)) ) then
-                   !stop "size dQ_dr not allocated correctly"
-                   !endif
                    dQ_dr(:,count,i_atom) = fac(:)
                    dQ_dr_index(1,count,i_atom) =n1+1
                    dQ_dr_index(2,count,i_atom) =n2+1
@@ -1373,6 +645,10 @@ contains
           PME_data%Ewald_self = PME_data%Ewald_self - atom_data%charge(i_atom)**2
        end do
     PME_data%Ewald_self = PME_data%Ewald_self * PME_data%alpha_sqrt/constants%pi_sqrt
+
+    ! convert from e^2/A to kJ/mol energy units
+    PME_data%Ewald_self = PME_data%Ewald_self * constants%conv_e2A_kJmol
+
 
   end subroutine update_Ewald_self
 

@@ -197,47 +197,31 @@ contains
   !
   ! upon a change in the identity of the hydronium ion, the following data structures are
   ! changed with the call to evb_create_diabat_data_structures subroutine
-  ! local :: xyz, r_com, chg, n_atom, mass
   ! global :: hydronium_molecule_index, atom_index, molecule_index
   !
-  ! additionally, if velocity array is present (vel_atom), then the velocities are updated to the correct topology given a proton transfer
   !*************************
-  subroutine ms_evb_calculate_total_force_energy( adiabatic_force, adiabatic_energy, tot_n_mole, n_mole, n_atom, xyz, r_com, chg, mass, box, dfti_desc,dfti_desc_inv,log_file, vel_atom )
-    use MKL_DFTI
-    real*8,dimension(:,:,:),intent(out) :: adiabatic_force
-    real*8 , intent(out)  :: adiabatic_energy
-    integer, intent(in) :: tot_n_mole, n_mole
-    integer, intent(inout), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: box
-    real*8, intent(inout), dimension(:,:) :: r_com, chg, mass
-    real*8, intent(inout), dimension(:,:,:) :: xyz
-    TYPE(DFTI_DESCRIPTOR), pointer,intent(in):: dfti_desc,dfti_desc_inv
-    integer,intent(in)::log_file
-    real*8,intent(inout),dimension(:,:,:), optional :: vel_atom
+  subroutine ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data  )
+    type(system_data_type)      :: system_data
+    type(molecule_data_type)    :: molecule_data
+    type(atom_data_type)        :: atom_data
+    type(verlet_list_data_type) :: verlet_list_data
+    type(PME_data_type)         :: PME_data
 
-    integer :: i_mole, i_mole_principle, i_mole_hydronium, new_i_mole_hydronium, principle_diabat
-    ! temporary diabat data structures
-    real*8, dimension(:,:,:), allocatable :: xyz_temp1, force_temp1, vel_atom_temp1
-    real*8, dimension(:,:), allocatable :: r_com_temp1
-    real*8, dimension(:,:), allocatable :: chg_temp1, mass_temp1
-    integer, dimension(:), allocatable :: n_atom_temp1
-    !****** this is junk variables to pass  *********
-    integer, dimension(MAX_N_MOLE) :: n_atom_drude
+
+    integer :: i_mole_principle, i_mole_hydronium, new_i_mole_hydronium, principle_diabat
     integer   :: flag_junk
-
-    n_atom_drude = n_atom
-
 
     if ( n_hydronium_molecules > 1 ) then
        stop "can't have more than 1 hydronium"
     end if
 
 
-!!$    ! loop over hydronium molecules
-!!$    do i_mole=1, n_hydronium_molecules
-    i_mole = 1
-    i_mole_hydronium = hydronium_molecule_index( i_mole )
-    call construct_evb_hamiltonian( i_mole_hydronium, tot_n_mole, n_mole, n_atom, xyz, r_com, chg, mass, box, dfti_desc,dfti_desc_inv,log_file )
+    ! in principle, we have this array if this more than one excess proton. 
+    ! right now, MS-EVB is implemented for only 1 proton
+
+    i_mole_hydronium = hydronium_molecule_index(1)
+
+    call construct_evb_hamiltonian( i_mole_hydronium,  system_data, molecule_data, atom_data, verlet_list_data, PME_data   )
 
     call diagonalize_evb_hamiltonian( principle_diabat, new_i_mole_hydronium,  i_mole_hydronium, adiabatic_energy, adiabatic_force, tot_n_mole, n_atom, log_file )
 
@@ -441,32 +425,17 @@ contains
   ! 
   ! here we assume pme is being used to calculate electrostatics
   !************************************
-  subroutine construct_evb_hamiltonian( i_mole_principle, tot_n_mole, n_mole, n_atom, xyz, r_com, chg, mass, box, dfti_desc,dfti_desc_inv,log_file )
-    use MKL_DFTI
+  subroutine construct_evb_hamiltonian( i_mole_principle, system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     use total_energy_forces
-    integer, intent(in) :: i_mole_principle, tot_n_mole, n_mole
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: box,r_com, chg, mass
-    real*8, intent(in), dimension(:,:,:) :: xyz
-    TYPE(DFTI_DESCRIPTOR), pointer,intent(in):: dfti_desc,dfti_desc_inv
-    integer,intent(in)::log_file
-
+    integer, intent(in) :: i_mole_principle
+    type(system_data_type)      :: system_data
+    type(molecule_data_type)    :: molecule_data
+    type(atom_data_type)        :: atom_data
+    type(verlet_list_data_type) :: verlet_list_data
+    type(PME_data_type)         :: PME_data
+    
     integer ::  diabat_index_donor,  i_mole_donor, store_index
-    real*8, dimension(MAX_N_MOLE,MAX_N_ATOM,3) :: force_atoms
-    real*8  :: potential, E_ms_evb_repulsion, E_reference
-
-    !****** these are junk variables to pass to calculate_total_force_energy subroutine *********
-    !****** as we don't implement ms-evb for polarizable force field
-    real*8 :: E_elec, E_bh, E_bond, E_angle, E_dihedral, E_elec_nopol, E_3body
-    integer :: iteration
-    integer, dimension(MAX_N_MOLE) :: n_atom_drude
-    real*8, dimension(MAX_N_MOLE,MAX_N_ATOM,3) :: xyz_drude
-    real*8, dimension(MAX_N_MOLE,MAX_N_ATOM,3) :: force_atoms_junk
-    real*8, dimension(:,:,:), allocatable :: Q_grid_junk
-    real*8     :: E_junk
-
-    n_atom_drude = n_atom
-    !********************************************************************************************
+    real*8  ::  E_ms_evb_repulsion, E_reference
 
     ! initialize proton hop log
     evb_diabat_proton_log=-1
@@ -486,24 +455,19 @@ contains
     endif
     !***********************************************************************!
 
-
     !*********************** energy and force of primary diabat ******************************!
-    call calculate_total_force_energy( force_atoms,potential, E_elec,E_elec_nopol,E_bh, E_3body, E_bond, E_angle, E_dihedral, iteration, tot_n_mole, n_mole, n_atom, n_atom_drude, r_com, xyz, chg, box, dfti_desc,dfti_desc_inv,log_file,xyz_drude)
+    call calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
 
     ! need to add contribution from special evb repulsive interactions
-    call ms_evb_intermolecular_repulsion( force_atoms , E_ms_evb_repulsion, n_mole  , n_atom , xyz, hydronium_molecule_index, atom_index, molecule_index, box )
+    call ms_evb_intermolecular_repulsion( E_ms_evb_repulsion, hydronium_molecule_index, system_data, molecule_data, atom_data )
 
-!!$    write(*,*) "msevb potential"
-!!$    write(*,*) potential, E_ms_evb_repulsion
-
-    potential = potential + E_ms_evb_repulsion
+    system_data%potential_energy = system_data%potential_energy + E_ms_evb_repulsion
 
     ! now add reference chemical energy for this adiabatic state
     call get_adiabatic_reference_energy( E_reference, i_mole_donor, molecule_index )
-    potential = potential + E_reference
 
-!!$    write(*,*) "diabat potential"
-!!$    write(*,*) potential
+    system_data%potential_energy = system_data%potential_energy + E_reference
+
 
 
     !****************************************************************************************
@@ -1710,7 +1674,7 @@ contains
   ! with all the other molecules in the system
   !**********************************
   subroutine ms_evb_diabat_force_energy_update_lj( force_atoms, E_lj, i_mole_donor, i_mole_acceptor, n_mole, n_atom, xyz, molecule_index_temp, atom_index_temp, hydronium_molecule_index_temp, box)
-    use pairwise_interaction
+    use pair_int_real_space
     real*8, dimension(:,:,:),intent(inout) :: force_atoms
     real*8, intent(out)                  :: E_lj
     integer, intent(in) :: i_mole_donor, i_mole_acceptor, n_mole
@@ -2381,30 +2345,30 @@ contains
   ! the acidic proton and it's connected basic atom of the donor
   ! which are used to calculate the repulsive interactions
   !**************************************
-  subroutine ms_evb_intermolecular_repulsion( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, hydronium_molecule_index_local, atom_index_local, molecule_index_local, box )
-    real*8,dimension(:,:,:),intent(inout) :: force
+  subroutine ms_evb_intermolecular_repulsion( E_ms_evb_repulsion, hydronium_molecule_index_local, system_data, molecule_data, atom_data  )
     real*8, intent(out)  :: E_ms_evb_repulsion
-    integer, intent(in)  :: n_mole
-    integer, dimension(:),intent(in) :: n_atom
-    real*8, dimension(:,:,:), intent(in) :: xyz
     integer, dimension(:), intent(in) :: hydronium_molecule_index_local
-    integer, dimension(:,:), intent(in) :: atom_index_local
-    integer, dimension(:), intent(in) :: molecule_index_local
-    real*8, dimension(:,:), intent(in)  :: box
+    type(system_data_type)      :: system_data
+    type(molecule_data_type)    :: molecule_data
+    type(atom_data_type)        :: atom_data
 
     integer :: i_mole, i_mole_hydronium 
 
     E_ms_evb_repulsion = 0d0
+
     ! loop over hydronium molecules
+    ! as implemented, this should only be 1 hydronium!
     do i_mole=1, n_hydronium_molecules
        i_mole_hydronium = hydronium_molecule_index_local( i_mole )
+
        ! compute three-atom-special evb repulsion
-       call ms_evb_three_atom_repulsion( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
+       call ms_evb_three_atom_repulsion( E_ms_evb_repulsion, i_mole_hydronium, system_data, molecule_data, atom_data )
+
        ! now compute Born-Mayer terms
-       call ms_evb_born_mayer( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
-       ! compute anisotropic morse interactions
-       !call ms_evb_anisotropic_morse( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
+       call ms_evb_born_mayer( E_ms_evb_repulsion, i_mole_hydronium, system_data, molecule_data, atom_data  )
+
     end do
+
   end subroutine ms_evb_intermolecular_repulsion
 
 
@@ -2419,15 +2383,12 @@ contains
   ! the acidic proton and it's connected basic atom of the donor
   ! which are used to calculate the repulsive interactions
   !**************************************
-  subroutine ms_evb_three_atom_repulsion( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
-    real*8,dimension(:,:,:),intent(inout) :: force
+  subroutine ms_evb_three_atom_repulsion( E_ms_evb_repulsion, i_mole_hydronium, system_data, molecule_data, atom_data )
     real*8, intent(inout)  :: E_ms_evb_repulsion
-    integer, intent(in)  :: n_mole, i_mole_hydronium
-    integer, dimension(:),intent(in) :: n_atom
-    real*8, dimension(:,:,:), intent(in) :: xyz
-    integer, dimension(:,:), intent(in) :: atom_index_local
-    integer, dimension(:), intent(in) :: molecule_index_local
-    real*8, dimension(:,:), intent(in)  :: box
+    integer, intent(in)  :: i_mole_hydronium
+    type(system_data_type)      :: system_data
+    type(molecule_data_type)    :: molecule_data
+    type(atom_data_type)        :: atom_data
 
     integer :: j_mole, i_atom, j_atom, index, i_type, i_type_H, i_type_heavy, j_type, i_atom_oxygen, i_heavy, index1
     real*8, dimension(3)  :: shift, rij, rij_O, q, fij
@@ -2437,7 +2398,7 @@ contains
     real*8 ::  B, bl, d0_heavy, blprime, rs_heavy, rc_heavy
 
 
-    i_type_H = atom_index_local(i_mole_hydronium,n_atom(i_mole_hydronium))
+    i_type_H = atom_index_local(i_mole_hydronium, molecule_data(i_mole_hydronium)%n_atom )
     call get_heavy_atom_transfer_acid( i_heavy , i_mole_hydronium, molecule_index_local )
     i_type_heavy = atom_index_local( i_mole_hydronium, i_heavy )
 
@@ -2566,96 +2527,6 @@ contains
 
 
   end subroutine ms_evb_born_mayer
-
-
-
-  !********************************
-  ! these are anisotropic morse interactions
-  ! atoms on the proton-donor and acceptor
-  !********************************
-  subroutine ms_evb_anisotropic_morse( force, E_ms_evb_repulsion, n_mole , n_atom , xyz, i_mole_hydronium, atom_index_local, molecule_index_local, box )
-    real*8,dimension(:,:,:),intent(inout) :: force
-    real*8, intent(inout)  :: E_ms_evb_repulsion
-    integer, intent(in)  :: n_mole, i_mole_hydronium
-    integer, dimension(:),intent(in) :: n_atom
-    real*8, dimension(:,:,:), intent(in) :: xyz
-    integer, dimension(:,:), intent(in) :: atom_index_local
-    integer, dimension(:), intent(in) :: molecule_index_local
-    real*8, dimension(:,:), intent(in)  :: box
-
-    integer ::  j_mole, i_atom, j_atom, k_atom, i_type, j_type, k_type, index1, j_mole_type
-    real*8, dimension(3)  :: shift, rij, rjk, fij, fjk
-    real*8  :: r_ij, r_jk, cosine, E_morse, morse_term1,  morse_term2
-    ! interaction parameters
-    real*8 ::  D0, D1, alpha, req
-
-
-    ! loop over atoms in proton donor
-    do i_atom = 1 , n_atom(i_mole_hydronium)
-       i_type = atom_index_local(i_mole_hydronium,i_atom)
-
-       ! loop over solvent molecules
-       do j_mole=1, n_mole
-          j_mole_type = molecule_index_local(j_mole)
-
-          if ( j_mole /= i_mole_hydronium ) then
-             ! see if any of the atoms of this solvent molecule are involved in the repulsive interaction
-             do j_atom = 1 , n_atom(j_mole)
-                j_type = atom_index_local(j_mole,j_atom)
-                ! find axis defining atom. This atom must be bonded
-                do k_atom = 1 , n_atom(j_mole)
-                   k_type = atom_index_local(j_mole,k_atom)
-
-                   if ( molecule_bond_list(j_mole_type,j_atom,k_atom) == 1 ) then
-
-                      ! see if this is a defined interaction
-                      call get_index_atom_set( index1, evb_anisotropic_morse_interaction, (/i_type, j_type, k_type/) )
-
-                      if ( index1 > 0 ) then
-
-                         D0 =    evb_anisotropic_morse_parameters(index1,1) ; D1  = evb_anisotropic_morse_parameters(index1,2) ;
-                         alpha = evb_anisotropic_morse_parameters(index1,3) ; req = evb_anisotropic_morse_parameters(index1,4) ;
-
-                         shift = pbc_shift( xyz(i_mole_hydronium,i_atom,:), xyz(j_mole,j_atom,:), box, xyz_to_box_transform)
-
-                         ! hydronium proton, the negative sign creates displacement from water to hydronium atom
-                         rij = -pbc_dr( xyz(i_mole_hydronium,i_atom,:), xyz(j_mole,j_atom,:), shift ) 
-                         r_ij = dsqrt( dot_product( rij, rij ) )
-                         ! this defines z-axis
-                         rjk(:) = xyz(j_mole,j_atom,:) - xyz(j_mole,k_atom,:)
-                         r_jk = dsqrt( dot_product( rjk, rjk ) )
-                         cosine = dot_product( rij , rjk ) / r_ij / r_jk
-
-                         morse_term1 = D0 + D1 * cosine
-                         morse_term2 = 1d0 - ( 1d0 - exp(-alpha*(r_ij - req)) ) ** 2 
-
-                         E_morse = morse_term1 * morse_term2
-                         E_ms_evb_repulsion = E_ms_evb_repulsion + E_morse
-
-                         ! from derivative of radial morse part
-                         fij = 2d0 * morse_term1 * alpha * exp(-alpha*(r_ij - req)) * ( 1d0 - exp(-alpha*(r_ij - req)) )* rij(:) / r_ij
-                         ! from derivative of anistropic coeff part
-
-                         fij = fij - ( rjk / r_ij / r_jk - cosine * rij(:) / r_ij ** 2 ) * D1 * morse_term2
-                         fjk =     - ( rij / r_ij / r_jk - cosine * rjk(:) / r_jk ** 2 ) * D1 * morse_term2
-
-                         force(i_mole_hydronium, i_atom,:) = force(i_mole_hydronium, i_atom,:) + fij(:)
-                         force(j_mole,j_atom,:) = force(j_mole,j_atom,:) - fij(:) + fjk(:)
-                         force(j_mole,k_atom,:) = force(j_mole,k_atom,:) - fjk(:)
-
-                      end if
-
-                   end if
-
-                enddo
-             enddo
-          endif
-       enddo
-    enddo
-
-
-  end subroutine ms_evb_anisotropic_morse
-
 
 
 
@@ -3407,49 +3278,6 @@ contains
        count = count + 1
     enddo
     if ( flag_eof == -1 ) goto 100  ! end of file
-
-
-    !**************************  anisotropic morse interaction
-!!$    call read_file_find_heading( file_h, '[ anisotropic ]' , flag_anisotropic, flag_eof )
-!!$    if ( flag_eof == -1 ) goto 100  ! end of file
-!!$    call write_ms_evb_io_info( '[ anisotropic ]' )
-!!$    flag_eof=0
-!!$    count=1
-!!$    do
-!!$       call read_topology_line( file_h , input_string , flag )
-!!$       ! if end of file
-!!$       if ( flag == -1 ) then
-!!$          flag_eof=-1
-!!$          exit
-!!$       end if
-!!$       ! if end of section
-!!$       if ( flag == 1 ) exit
-!!$
-!!$
-!!$       if ( count > max_interaction_type ) stop "please increase value of 'max_interaction_type'"
-!!$       call parse(input_string," ",args,nargs)
-!!$       if ( nargs /= 7 ) stop "must have 7 arguments in 'anisotropic' section of [ evb_parameters ] section of topology file"
-!!$       read(args(1),*) atomtype1
-!!$       read(args(2),*) atomtype2
-!!$       read(args(3),*) atomtype3
-!!$       call trim_end(atomtype1)
-!!$       call trim_end(atomtype2)
-!!$       call trim_end(atomtype3)
-!!$       call atype_name_reverse_lookup( atomtype1, itype1 )
-!!$       call atype_name_reverse_lookup( atomtype2, itype2 )
-!!$       call atype_name_reverse_lookup( atomtype3, itype3 )
-!!$       ! fill in index for this interaction
-!!$       evb_anisotropic_morse_interaction(count,1) = itype1
-!!$       evb_anisotropic_morse_interaction(count,2) = itype2  
-!!$       evb_anisotropic_morse_interaction(count,3) = itype3 
-!!$       read(args(4),*) evb_anisotropic_morse_parameters(count,1)
-!!$       read(args(5),*) evb_anisotropic_morse_parameters(count,2)
-!!$       read(args(6),*) evb_anisotropic_morse_parameters(count,3)
-!!$       read(args(7),*) evb_anisotropic_morse_parameters(count,4)
-!!$       count = count + 1
-!!$    enddo
-!!$    if ( flag_eof == -1 ) goto 100  ! end of file
-
 
 
     ! ************************** diabat-coupling parameters

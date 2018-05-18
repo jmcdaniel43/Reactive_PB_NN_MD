@@ -62,11 +62,6 @@ implicit none
   ! this array contains donor_acceptor ms-evb interaction parameters
   real*8, dimension(max_interaction_type,6) :: evb_donor_acceptor_parameters
   !
-  ! this array lists the atomtypes for each ms-evb anisotropic morse interaction
-  ! order of atomtypes in this array is 1) proton, 2) heavy-atom acceptor, 3) axis-atom acceptor
-  integer, dimension(max_interaction_type,3) :: evb_anisotropic_morse_interaction
-  ! this array contains donor_acceptor ms-evb interaction parameters
-  real*8, dimension(max_interaction_type,4) :: evb_anisotropic_morse_parameters
   !
   ! this array lists the atomtypes for each ms-evb proton_acceptor interaction
   ! that is considered, i.e. equation 8 in JPCB,2008,112,467-482
@@ -121,7 +116,7 @@ implicit none
    integer :: total_atoms ! total number of atoms in simulation
    real*8, dimension(3,3) :: box 
    real*8, dimension(3,3) :: xyz_to_box_transform  ! transformation matrix to box vectors
-   real*8                 :: volume_box 
+   real*8                 :: volume
    real*8                 :: temperature      ! temperature for generating Maxwell-Boltzmann velocities (no thermostat yet)
    real*8                 :: kinetic_energy   ! total system KE
    real*8                 :: potential_energy ! total system PE
@@ -156,6 +151,7 @@ implicit none
  !************************* defined type to store all molecule information
  type molecule_data_type
    integer :: n_atom            ! number of atoms in this molecule
+   integer :: molecule_type_index    ! index of molecule type in molecule_type array
    character(MAX_MNAME) :: mname
    ! IMPORTANT : Note that we allocate atom_index to be 1 unit bigger than
    ! number of atoms of molecule, in case proton is transferred to this molecule
@@ -208,6 +204,8 @@ implicit none
   real*8, parameter :: pi=3.141592654d0
   real*8, parameter :: pi_sqrt=1.772453851d0
   real*8, parameter :: conv_kJmol_ang2ps2gmol = 100d0  ! converts kJ/mol to A^2/ps^2*g/mol
+  real*8, parameter :: conv_e2A_kJmol = 1389.35465     ! converts e^2/A to kJ/mol
+  real*8, parameter :: boltzmann = 0.008314462d0       ! kB, kJ/mol/K
  end type constants_data_type
 
  Type(constants_data_type) :: constants
@@ -249,7 +247,7 @@ implicit none
   real*8,dimension(:,:,:), pointer     ::  CB, Q_grid,theta_conv_Q
   real*8,dimension(:,:,:), pointer     ::  dQ_dr
   integer,dimension(:,:,:), pointer    ::  dQ_dr_index
-  real*8,dimension(:,:) , pointer      ::  atom_list_force_recip
+  real*8,dimension(:,:) , pointer      ::  force_recip
   TYPE(DFTI_DESCRIPTOR), POINTER       ::  dfti_desc,dfti_desc_inv  ! for MKL FFT
   real*8                               ::  E_recip
   integer,parameter                    ::  spline_grid=100000
@@ -264,7 +262,7 @@ implicit none
   real*8,dimension(:,:,:),allocatable, target   ::  CB, Q_grid,theta_conv_Q
   real*8,dimension(:,:,:), allocatable, target  ::  dQ_dr
   integer,dimension(:,:,:), allocatable, target ::  dQ_dr_index
-  real*8,dimension(:,:) , allocatable,   target ::  atom_list_force_recip
+  real*8,dimension(:,:) , allocatable,   target ::  force_recip  ! stores reciprocal space PME forces for MS-EVB
   real*8,dimension(:), allocatable, target      ::  B6_spline,B5_spline,B4_spline,B3_spline
   real*8,dimension(:), allocatable, target      ::  erfc_table
 
@@ -272,15 +270,13 @@ implicit none
  !********************************************* global data structures for force field **************************************************************
   integer:: n_atom_type, n_molecule_type
   character(MAX_ANAME), dimension(MAX_N_ATOM_TYPE) :: atype_name
-  real*8, dimension(MAX_N_ATOM_TYPE) :: atype_chg,atype_pol
+  real*8, dimension(MAX_N_ATOM_TYPE) :: atype_chg
   integer, dimension(MAX_N_ATOM_TYPE) :: atype_freeze  ! this flag is for freezing atom types
   real*8, dimension(MAX_N_ATOM_TYPE) :: atype_mass    
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_lj_parameter        ! for buckingham, store A,B,C6 (possibly C8,C10), for LJ, store epsilon,sigma ; index 6 is for possible C12 terms
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_lj_parameter_14        ! this is same as atype_lj_parameter array, but stores special values for 1-4 interactions as used in GROMOS-45a3 force field
   integer, dimension(MAX_N_MOLE_TYPE,MAX_N_ATOM) :: molecule_type      ! this array contains indices for all types of solute molecules (not framework) end is marked with MAX_N_ATOM+1
   character(MAX_MNAME), dimension(MAX_N_MOLE_TYPE) :: molecule_type_name
-  integer, dimension(MAX_N_MOLE,MAX_N_ATOM):: atom_index            ! integer specifies where to look up atom parameters in lj_parameter array
-  integer, dimension(MAX_N_MOLE):: molecule_index            ! integer indexes molecule type for all solute molecules in simulation
   integer                 :: lj_bkghm                ! =1 for bkghm, =2 for lj
   character(10)            :: lj_comb_rule            ! for lj, set to "opls" or "standard"== Lorentz-Berthelot, for bkghm, set to "standard" or "ZIFFF"
  ! if lj_bkghm is set to 3, meaning we are using hybrid lj/bkghm force field, we need a 2nd combination rule.  The first "lj_comb_rule" will then be used for the bkghm force field for solute-framework interactions, and "lj_comb_rule2" will be used for the lj force field for solute-solute interactions
@@ -288,9 +284,6 @@ implicit none
   integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: lj_bkghm_index ! this  maps which atom-atom types use a lj interaction, and which use a buckingham interaction, which is really only necessary for lj_bkghm=3, but is used always
 
 ! intra-molecular bond, angle and dihedral data structures
-! note the mapping for each molecule to the molecule type index
-! used to access the particular molecular parameters is contained
-! in the molecule_index array
   integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE)  :: atype_bond_type  ! stores type of bond, 1=harmonic, 2=GROMOS-96, 3=Morse
   real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,3) :: atype_bond_parameter ! stores intra-molecular bond parameters for pair of atomtypes. For harmonic bond, first parameter is b0 (angstroms), second is kb (Kj/mol)/angstrom^2 , for Morse potential, first parameter is D (kJ/mol) , second is beta(angstroms^-1), third is b0(angstroms)
   integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE)  :: atype_angle_type ! stores type of angle, 1=harmonic, 2=GROMOS96

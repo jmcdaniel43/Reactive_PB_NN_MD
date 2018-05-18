@@ -4,7 +4,7 @@
 module total_energy_forces
   use global_variables
   use MKL_DFTI
-  use pairwise_interaction
+  use pair_int_real_space
   use pme_routines
   use bonded_interactions
   use routines
@@ -49,30 +49,37 @@ contains
     !***************************************************************************************
 
 
-    !*********** Electrostatics *************
-    call pme_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
+    !***************************** real-space interactions *************************
+    !***  This covers the real-space part of PME, and
+    !*** all intra and intermolecular pairwise VDWs interactions.  This will
+    !*** update the global atom_type%force array, as well as system_data%E_elec
+    !*** and system_data%E_vdw
+    call real_space_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
 
 
-    !*** Lennard Jones/ Buckingham terms ****
 
-       !****************************timing**************************************!
-       if(debug .eq. 1) then
-          call date_and_time(date,time)
-          write(*,*) "lj force and energy started at", time
-       endif
-       !***********************************************************************!
+    !****************************  reciprocal-space interactions    *****************
 
+    !****************************timing**************************************!
+    if(debug .eq. 1) then
+       call date_and_time(date,time)
+       write(*,*) "reciprocal space PME calculation started at", time
+    endif
+    !***********************************************************************!
 
-       call lennard_jones( E_bh, lj_force, tot_n_mole, n_mole, n_atom, xyz, box, r_com)
+    call pme_reciprocal_space_energy_force( system_data, molecule_data, atom_data, PME_data )
 
-       !****************************timing**************************************!
-       if(debug .eq. 1) then
-          call date_and_time(date,time)
-          write(*,*) "lj force and energy finished at", time
-       endif
-       !***********************************************************************!
+    ! now electrostatic energy has both real and reciprocal space contributions,
+    ! add Ewald self correction
+    system_data%E_elec = system_data%E_elec + PME_data%Ewald_self
 
-       force_atoms = force_atoms + lj_force
+    !****************************timing**************************************!
+    if(debug .eq. 1) then
+       call date_and_time(date,time)
+       write(*,*) "reciprocal space PME calculation finished at", time
+    endif
+    !***********************************************************************!
+
 
 
     !***************************** intra-molecular bond, angle energy and forces *****************
@@ -83,7 +90,7 @@ contains
        write(*,*) "intra_molecular force and energy started at", time
     endif
     !***********************************************************************!
-    call intra_molecular_energy_force( E_bond, E_angle, E_dihedral, force_atoms, n_mole, n_atom, xyz )
+    call intra_molecular_energy_force( system_data, molecule_data, atom_data )
     !****************************timing**************************************!
     if(debug .eq. 1) then
        call date_and_time(date,time)
@@ -91,16 +98,9 @@ contains
     endif
     !***********************************************************************!
 
-    ! total potential energy of system:  Note that E_disp_lrc is not computed here, it is stored in
-    ! global_variables and only recomputed whenever volume or particle number changes, as it
-    ! doesn't depend on atomic positions
+    ! total potential energy of system
+    system_data%potential_energy = system_data%E_elec + system_data%E_vdw + system_data%E_bond + system_data%E_angle + system_data%E_dihedral
 
-
-    potential = E_elec + E_bh + E_disp_lrc + E_bond + E_angle + E_dihedral
-
-
-!!$    write(*,*) "elec, bh , bond, angle, dihedral"
-!!$    write(*,*) E_elec , E_bh , E_bond , E_angle, E_dihedral
 
   end subroutine calculate_total_force_energy
 
@@ -111,24 +111,21 @@ contains
   !**************************************
   ! this subroutine calculates the total kinetic energy
   ! of the system
+  ! conv_fac is conv_kJmol_ang2ps2gmol
   !**************************************
-  subroutine calculate_kinetic_energy( KE, n_mole,n_atom, mass, vel_atom, conv_fac )
+  subroutine calculate_kinetic_energy( KE, n_atom, mass, vel_atom, conv_fac )
     use global_variables
     real*8,intent(out) :: KE
-    integer,intent(in) :: n_mole
-    integer,dimension(:),intent(in) :: n_atom
-    real*8,dimension(:,:),intent(in) :: mass
-    real*8,dimension(:,:,:), intent(in) :: vel_atom
+    integer,dimension,intent(in) :: n_atom
+    real*8,dimension(:),intent(in) :: mass
+    real*8,dimension(:,:), intent(in) :: vel_atom
     real*8,intent(in) :: conv_fac
 
-    integer :: i_mole, i_atom,index
+    integer :: i_atom
 
     KE=0d0
-    ! flexible molecules
-    do i_mole=1,n_mole
-       do i_atom=1,n_atom(i_mole)
-          KE = KE + 0.5d0 * mass(i_mole,i_atom) * dot_product(vel_atom(i_mole,i_atom,:),vel_atom(i_mole,i_atom,:))/ conv_fac
-       end do
+    do i_atom=1,n_atom
+       KE = KE + 0.5d0 * mass(i_atom) * dot_product(vel_atom(:,i_atom),vel_atom(:,i_atom))/ conv_fac
     end do
 
   end subroutine calculate_kinetic_energy

@@ -64,13 +64,13 @@ contains
        open( traj_file, file=file_io_data%ofile_traj, status='old' )
        ! read until last printed step
        do 
-          call read_file_find_heading( traj_file, 'i_step' , flag, flag_eof )
+          call read_file_find_heading( traj_file, 'step' , flag, flag_eof )
           if ( flag_eof == -1 ) Exit  ! end of file
           backspace(traj_file)
           read(traj_file,'(A)') line
           call parse( line," ", args, nargs )
           if ( nargs /= 4 ) stop "error reading line arguments in trajectory file"
-          read(args(3),'(I10)') i_step_traj
+          read(args(2),'(I10)') i_step_traj
        enddo
 
        ! ****************** read velocity_file ***************
@@ -135,13 +135,13 @@ contains
     
        ! read until the final step
        do 
-          call read_file_find_heading( traj_file, 'i_step' , flag, flag_eof )
+          call read_file_find_heading( traj_file, 'step' , flag, flag_eof )
           if ( flag_eof == -1 ) Exit  ! end of file
           backspace(traj_file)
           read(traj_file,'(A)') line
           call parse( line," ", args, nargs )
           if ( nargs /= 4 ) stop "error reading line arguments in trajectory file"
-          read(args(3),'(I10)') i_step_traj
+          read(args(2),'(I10)') i_step_traj
 
           ! if final step, exit this loop
           if ( i_step_traj == n_old_trajectory ) Exit
@@ -287,12 +287,14 @@ contains
    end do
    
    ! now fill in last molecule
-   molecule_data(i_mole_prev)%n_atom = i_atom
-   allocate( molecule_data(i_mole_prev)%atom_index( i_atom + 1 ) ) ! as previous, allocate 1 unit bigger...
+   molecule_data(i_mole)%n_atom = i_atom
+   allocate( molecule_data(i_mole)%atom_index( i_atom + 1 ) ) ! as previous, allocate 1 unit bigger...
    i_start = total_atoms - i_atom
    do j = 1 , i_atom
-       molecule_data(i_mole_prev)%atom_index( j ) = i_start + j - 1
+       molecule_data(i_mole)%atom_index( j ) = i_start + j - 1
    enddo
+   call trim_end( mname )
+   molecule_data(i_mole)%mname = mname
 
 
    ! now get box.  Initialize to zero in case orthorhombic..
@@ -528,59 +530,34 @@ contains
   ! reciprocal lattice vectors
   !********************************************
   subroutine create_scaled_direct_coordinates(xyz_scale, xyz, n_mole, n_atom, kk, K)
-    real*8,dimension(:,:,:),intent(out) :: xyz_scale
-    real*8,dimension(:,:,:),intent(in) :: xyz
-    integer, intent(in) :: n_mole
+    real*8,dimension(:,:),intent(out) :: xyz_scale
+    real*8,dimension(:,:),intent(in) :: xyz
     integer, dimension(:),intent(in) :: n_atom
     real*8,dimension(:,:),intent(in) :: kk
     integer, intent(in) :: K
 
-    integer :: i_mole
-    real*8,dimension(:,:),allocatable :: xyz_local
+    integer :: i_atom,l
+    real*8,parameter :: small=1D-6
 
-    allocate( xyz_local(size(xyz(1,:,1)),size(xyz(1,1,:))) )
-
-    do i_mole=1,n_mole
-       xyz_local(:,:) = xyz(i_mole,:,:)
-       call create_scaled_direct_coordinates_molecule(xyz_scale(i_mole,:,:), xyz_local, n_atom(i_mole), kk, K)
+    do i_atom=1,n_atom
+       do l=1,3
+          xyz_scale(l,i_atom)=dble(K)*dot_product(kk(l,:),xyz(:,i_atom))
+          ! if atoms are out of grid, shift them back in
+          if (xyz_scale(j,i_atom)<0d0) then
+             xyz_scale(j,i_atom)=xyz_scale(j,i_atom)+dble(K)
+          else if(xyz_scale(j,i_atom)>= dble(K)) then
+             xyz_scale(j,i_atom)=xyz_scale(j,i_atom)-dble(K)
+          endif
+          ! make sure scaled coordinates are not numerically equal to zero, otherwise this will screw up Q grid routine
+          if ( abs(xyz_scale(j,i_atom)) < small ) then
+             xyz_scale(j,i_atom) = small
+          end if
+       enddo
     enddo
 
   end subroutine create_scaled_direct_coordinates
 
 
-  !********************************************
-  ! this subroutine creates direct coordinates for a particular molecule, scaled
-  ! by input integer "K" (pme_grid), using the
-  ! reciprocal lattice vectors
-  !********************************************
-  subroutine create_scaled_direct_coordinates_molecule(xyz_scale, xyz, n_atom, kk, K)
-    real*8,dimension(:,:),intent(inout) :: xyz_scale
-    real*8,dimension(:,:),intent(inout) :: xyz
-    integer, intent(in) :: n_atom
-    real*8,dimension(:,:),intent(in) :: kk
-    integer, intent(in) :: K
-
-    integer :: j,l
-    real*8,parameter :: small=1D-6
-
-    do j=1,n_atom
-       do l=1,3
-          xyz_scale(j,l)=dble(K)*dot_product(kk(l,:),xyz(j,:))
-          ! if atoms are out of grid, shift them back in
-          if (xyz_scale(j,l)<0.) then
-             xyz_scale(j,l)=xyz_scale(j,l)+dble(K)
-             ! else if(xyz_scale(j,l)>dble(K)) then ! changed by Jesse, 6/10/2014 see below line.  In rare cases, this could lead to out of bounds array calls when constructing Q
-          else if(xyz_scale(j,l)>= dble(K)) then
-             xyz_scale(j,l)=xyz_scale(j,l)-dble(K)
-          endif
-          ! make sure scaled coordinates are not numerically equal to zero, otherwise this will screw up Q grid routine
-          if ( abs(xyz_scale(j,l)) < small ) then
-             xyz_scale(j,l) = small
-          end if
-       enddo
-    enddo
-
-  end subroutine create_scaled_direct_coordinates_molecule
 
 
 
@@ -744,57 +721,6 @@ contains
 
 
 
-  !****************************
-  ! this subroutine finds the first matching index
-  ! of an atomtype for a particular molecule
-  !****************************
-  subroutine match_first_atom_type( index, i_mole, n_atom, atom_type, atom_index_local )
-    integer, intent(out) :: index
-    integer, intent(in) :: i_mole
-    integer, dimension(:), intent(in) :: n_atom
-    character(*),intent(in) :: atom_type
-    integer, dimension(:,:), intent(in) :: atom_index_local
-
-    integer :: i_atom, i_type
-
-    index=index_first_atom_type( i_mole, n_atom, atom_type, atom_index_local )
-
-    if ( index < 0 ) then
-       write(*,*) ""
-       write(*,*) "Can't find atomtype ", atom_type
-       write(*,*) "molecule with index ", i_mole
-       write(*,*) ""
-       stop
-    end if
-
-  end subroutine match_first_atom_type
-
-
-
-  function index_first_atom_type( i_mole, n_atom, atom_type, atom_index_local )
-    use global_variables
-    integer             :: index_first_atom_type
-    integer, intent(in) :: i_mole
-    integer, dimension(:), intent(in) :: n_atom
-    character(*),intent(in) :: atom_type
-    integer, dimension(:,:), intent(in) :: atom_index_local
-
-    integer :: i_atom, i_type
-
-    index_first_atom_type=-1
-
-    do i_atom=1, n_atom(i_mole)
-       i_type = atom_index_local(i_mole, i_atom )
-
-       if( atype_name( i_type ) .eq. atom_type ) then
-          index_first_atom_type = i_atom
-          exit
-       end if
-    enddo
-
-  end function index_first_atom_type
-
-
   !*********************************
   ! this function returns single_molecule_data_type structure
   ! which sets pointers to an array block
@@ -813,6 +739,11 @@ contains
     ! get index of first and last atoms of molecule in global atom array
     low_index = atom_index(1)
     high_index = atom_index(n_atom)
+
+    ! if pointers are associated, deallocate
+    if ( associated(single_molecule_data%xyz) .or. associated(single_molecule_data%velocity) .or.  associated(single_molecule_data%force) .or.  associated(single_molecule_data%mass) .or. associated(single_molecule_data%charge) .or.  associated(single_molecule_data%atom_type_index) .or.  associated(single_molecule_data%aname) ) then
+      deallocate( single_molecule_data%xyz, single_molecule_data%velocity, single_molecule_data%force, single_molecule_data%mass , single_molecule_data%charge, single_molecule_data%atom_type_index, single_molecule_data%aname )
+    end if
 
     ! assign pointers to block of atoms in arrays
     single_molecule_data%xyz=>atom_data%xyz(:,low_index:high_index)
@@ -897,96 +828,66 @@ contains
     end do
   end subroutine trim_end
 
+
   !*************************************************************************
   ! this subroutine prints information about the simulation
+  ! to the log output file
   !*************************************************************************
-  subroutine print_run_param( log_file , n_mole, volume )
+  subroutine print_simulation_info( log_file , system_data, integrator_data, verlet_list_data, PME_data )
     use global_variables
-    integer, intent(in) :: n_mole,log_file
-    real*8, intent(in)  :: volume
-    integer  :: i
+    integer, intent(in) :: log_file
+    type(system_data_type) :: system_data
+    type(integrator_data_type) :: integrator_data
+    type(verlet_list_data_type) :: verlet_list_data
+    type(PME_data_type)    :: PME_data
 
-    write( log_file, *) "*******run parameters***************************"
-    write( log_file, *) "ensemble", "    ",select_ensemble
-    write( log_file, *) "lj_bkghm ", lj_bkghm
-    write( log_file, *) "lj cutoff", lj_cutoff
-    write( log_file, *) "verlet_cutoff ", verlet_cutoff
-    write( log_file, *) "pme dispersion ", pme_disp
-    write( log_file, *) "electrostatics","   ", electrostatic_type
-    Select Case(electrostatic_type)
-    Case("pme")
-       write( log_file, *) "Beta Spline order ", spline_order
-       write( log_file, *) "PME grid points ", pme_grid
-       write( log_file, *) "alpha_sqrt (for pme) ", alpha_sqrt
-    End Select
-    write( log_file, *) "electrostatic cutoff", ewald_cutoff, Electro_cutoff
-    write( log_file, *) "grid error function","   ", grid_erfc
-    write( log_file, *) "******special force field parameters************"
-    write( log_file, *) "******parallel or serial ************"
-    write( log_file, *) "number of threads  ", n_threads
-    write( log_file, *) "******ensemble specific info********************"
-    write( log_file, *) "temperature", temp
-    write( log_file, *) "molecules", n_mole
-    write( log_file, *) "volume", volume
-    write( log_file, *) "time step (ps) ", delta_t
+    write( log_file, *) "********** Simulation Parameters **********"
+    write( log_file, *) "ensemble                        ", integrator_data%ensemble
+    write( log_file, *) "real-space cutoff               ", real_space_cutoff
+    write( log_file, *) "verlet cutoff                   ", verlet_list_data%verlet_cutoff
+    write( log_file, *) "PME beta spline order           ", PME_data%spline_order
+    write( log_file, *) "PME grid size                   ", PME_data%pme_grid
+    write( log_file, *) "PME Gaussian width (alpha_sqrt) ", PME_data%alpha_sqrt
+    write( log_file, *) "number of threads               ", n_threads
+    write( log_file, *) "temperature                     ", system_data%temperature
+    write( log_file, *) "total number of atoms           ", system_data%total_atoms
+    write( log_file, *) "volume                          ", system_data%volume
+    write( log_file, *) "time step (ps)                  ", integrator_data%delta_t
 
-    write( log_file, *) "*******force field*****************************"
-    write( log_file, *) " name, mass, chg, lj_param(3), polarizability"
-    do i=1, n_atom_type
-       write( log_file, *) atype_name(i), atype_mass(i),atype_chg(i), atype_lj_parameter(i,i,1),atype_lj_parameter(i,i,2),atype_lj_parameter(i,i,3), atype_pol(i)
-    enddo
-
-
-  end  subroutine print_run_param
+  end subroutine print_simulation_info
 
 
   !**************************************************************************
-  ! This subroutine print results to trajectory file and log file
+  ! This subroutine print trajectory and energy info of step to trajectory file and log file
   !**************************************************************************
-  subroutine print_result( traj_file, log_file, n_mole, n_atom, xyz, box, i_step, E_elec,E_elec_nopol,E_bh, E_3body, E_bond, E_angle, E_dihedral, potential,new_KE,vol )
+  subroutine print_step( traj_file, log_file, i_step, system_data, integrator_data, molecule_data, atom_data )
     use global_variables
-    integer, intent(in) :: n_mole, traj_file, log_file, i_step
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:,:) :: xyz
-    real*8, intent(in), dimension(3,3) :: box
-    real*8, intent(in) :: potential, E_elec, E_elec_nopol,E_bh,E_3body,E_bond, E_angle, E_dihedral, new_KE,vol
-    integer :: i_mole, i_atom, i, j, m_index, a_index
+    integer, intent(in) :: traj_file, log_file, i_step
+    type(system_data_type)     :: system_data
+    type(integrator_data_type) :: integrator_data
+    type(molecule_data_type)   :: molecule_data
+    type(atom_data_type)       :: atom_data
 
+    real*8 :: time_step
 
-    write( traj_file, * ) '-------------  i_step ', i_step, ' -----------------' ! hua li de fen ge xian
+   time_step = dble(i_step) * integrator_data%delta_t
 
-    write( traj_file, * ) total_atoms
+   ! first print frame to trajectory .gro file
+   call print_gro_file( traj_file, i_step , time_step , system_data , molecule_data , atom_data ) 
 
-    i = 1
-    do i_mole = 1, n_mole
-       m_index = molecule_index(i_mole)
-       do i_atom = 1, n_atom( i_mole )
-          a_index = atom_index(i_mole,i_atom)
-          write( traj_file, '(I5,2A5,I5,3F14.6)' ) i_mole, molecule_type_name(m_index), atype_name(a_index), i, &
-               & xyz(i_mole,i_atom,1), xyz(i_mole,i_atom,2), xyz(i_mole,i_atom,3)
-          i = i + 1
-       end do
-    end do
-
-    do j=1,3
-       write( traj_file, '(3F15.8)' ) box(j,1), box(j,2), box(j,3)
-    enddo
+   write( log_file, * ) 'i_step , time(ps), potential energy (kJ/mol), kinetic energy (kJ/mol)'
+   write( log_file, '(I9,F10.3,2E16.6)' ) i_step, time_step, system_data%potential_energy, system_data%kinetic_energy
 
     Select Case(ms_evb_simulation)
     Case("yes")
-       write( log_file, '(I9,3E16.6)' ) i_step, potential
        write( log_file, * )  '------------------------------'
     case default   
-       write( log_file, * ) '   i_step  Electro_static      Buckingham      Bond      Angle    Dihedral  Potential'
-       write( log_file, '(I9,6E16.6)' ) i_step, E_elec, E_bh, E_bond, E_angle, E_dihedral, potential
+       write( log_file, * ) 'Electrostatic ,   VDWs ,   Bond   ,   Angle  ,  Dihedral'
+       write( log_file, '(5E16.6)' ) system_data%E_elec, system_data%E_vdw, system_data%E_bond, system_data%E_angle, system_data%E_dihedral
        write( log_file, * )  '------------------------------'
     end Select
 
-    write(log_file,*) "long range correction", E_disp_lrc
-    write(log_file,*) "KE",new_KE
-    write(log_file,*) "molecules", n_mole, "volume", vol
-
-  end subroutine print_result
+  end subroutine print_step
 
 
 
@@ -994,30 +895,42 @@ contains
   !*******************************************
   ! this subroutine print grofile format output
   !*******************************************
-  subroutine print_gro_file( i_step , xyz , n_mole , n_atom , box , file_h )
+  subroutine print_gro_file( grofile_h, i_step , time_step , system_data , molecule_data , atom_data )
     use global_variables
-    integer, intent(in) :: i_step, n_mole, file_h
-    real*8,dimension(:,:,:), intent(in) :: xyz
-    integer, dimension(:), intent(in) :: n_atom
-    real*8,dimension(:,:) , intent(in) :: box
+    integer, intent(in) :: grofile_h, i_step
+    real*8, intent(in)  :: time_step
+    type(system_data_type)   :: system_data
+    type(molecule_data_type) :: molecule_data
+    type(atom_data_type)     :: atom_data
+    
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
 
-    integer :: i_mole, i_atom, m_index, a_index, count
- 
-          write( file_h, *) "step ", i_step
-          write( file_h, *) total_atoms
-          count=1
-          do i_mole =1 , n_mole
-             m_index = molecule_index(i_mole)
-             do i_atom=1,n_atom(i_mole)
-                a_index = atom_index(i_mole,i_atom)
-                ! print in nanometers for gro file
-                write( file_h, '(I5,2A5,I5,3F8.3)' ) i_mole , molecule_type_name(m_index) , atype_name(a_index), count, xyz(i_mole,i_atom,1) / 10d0 , xyz(i_mole,i_atom,2) / 10d0 , xyz(i_mole,i_atom,3) / 10d0
-                count = count + 1
-             end do
-         enddo
+    real*8  :: xyz(3), box(3,3)
+    integer :: i_mole, i_atom, i_count
 
-         ! this print obviously only works for orthorhombic boxes
-         write( file_h, * ) box(1,1) / 10d0 , box(2,2) / 10d0  , box(3,3) / 10d0 
+    write( file_h, *) "step ", i_step, "time(ps)", time_step
+    write( file_h, *) system_data%total_atoms
+    
+    i_count=1
+    do i_mole =1 , system_data%n_mole
+
+       ! set pointers for this data structure to target molecule
+       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+
+       do i_atom=1, molecule_data(i_mole)%n_atom
+           ! print in nanometers for gro file
+           xyz(:) = single_molecule_data%xyz(:,i_atom) / 10d0
+           write( grofile_h, '(I5,2A5,I5,3F8.3)' ) i_mole , molecule_data(i_mole)%mname , single_molecule_data%aname(i_atom), i_count, xyz
+           i_count = i_count + 1
+       enddo
+
+    enddo
+
+    ! print box
+    box = system_data%box / 10d0
+    write( grofile_h, * ) box(1,1) , box(2,2) , box(3,3) , box(1,2) , box(1,3) , box(2,1) , box(2,3) , box(3,1) , box(3,2)
 
   end subroutine print_gro_file
 
@@ -1029,22 +942,32 @@ contains
   ! this subroutine prints atomic velocities to a velocity checkpoint file
   ! the primary purpose of this is for continuing a simulation
   !*******************************************
-  subroutine print_velocities_checkpoint( i_step , file_h, n_mole , n_atom , vel_atom )
+  subroutine print_velocities_checkpoint( velfile_h, i_step , delta_t, system_data , molecule_data , atom_data )
     use global_variables
-    integer, intent(in) :: i_step, n_mole, file_h
-    integer, dimension(:), intent(in) :: n_atom
-    real*8,dimension(:,:,:), intent(in) :: vel_atom
+    integer, intent(in)      :: velfile_h, i_step
+    real*8,  intent(in)      :: delta_t
+    type(system_data_type)   :: system_data
+    type(molecule_data_type) :: molecule_data
+    type(atom_data_type)     :: atom_data
 
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
+
+    real*8, time_step
     integer :: i_mole, i_atom, m_index, a_index
  
-          write( file_h, *) "step ", i_step
-          do i_mole =1 , n_mole
-             m_index = molecule_index(i_mole)
-             do i_atom=1,n_atom(i_mole)
-                a_index = atom_index(i_mole,i_atom)
-                write( file_h, '(I5,2A5,I5,3F14.6)' ) i_mole , molecule_type_name(m_index) , atype_name(a_index), i_atom, vel_atom(i_mole,i_atom,1) , vel_atom(i_mole,i_atom,2) , vel_atom(i_mole,i_atom,3) 
-             end do
-         enddo
+    time_step = dble(i_step) * delta_t
+
+    write( velfile_h, *) "step ", i_step
+
+    do i_mole =1 , system_data%n_mole
+       ! set pointers for this data structure to target molecule
+       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       do i_atom=1, molecule_data(i_mole)%n_atom
+           write( velfile_h, '(I5,2A5,I5,3F14.6)' ) i_mole , molecule_data(i_mole)%mname , single_molecule_data%aname(i_atom), i_atom, single_molecule_data%velocity(:,i_atom)
+       enddo
+    enddo
 
   end subroutine print_velocities_checkpoint
 
@@ -1056,27 +979,43 @@ contains
   ! according to relative location in the molecule, so that the shift
   ! is based on the preceding atom
   !**************************************************************
-  subroutine fix_intra_molecular_shifts( n_atom, xyz, box, xyz_to_box_transform  )
-    integer, intent(in) :: n_atom
-    real*8, dimension(:,:), intent(inout) :: xyz
+  subroutine fix_intra_molecular_shifts( n_mole, molecule_data , atom_data, box, xyz_to_box_transform  )
+    use global_variables
+    integer, intent(in) :: n_mole
+    type(molecule_data_type), intent(in) :: molecule_data
+    type(atom_data_type), intent(inout)  :: atom_data
     real*8, dimension(:,:), intent(in) box, xyz_to_box_transform
 
-    integer ::  i_atom, j_atom
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
+
+    integer ::  i_mole, i_atom, j_atom, n_atom
     real*8,dimension(3) :: shift, drij
     real*8,parameter :: small=1D-6
 
-    ! shift atoms in molecule with respect to the preceding atom
-    if ( n_atom > 1 ) then
-       do i_atom=2, n_atom
-          j_atom = i_atom - 1
-          shift(:) = pbc_shift( xyz(:, j_atom), xyz(:, i_atom) , box , xyz_to_box_transform )
+    ! loop over molecules
+    do i_mole = 1 , n_mole
 
-          if ( ( abs( shift(1) ) > small ) .or. ( abs( shift(2)) > small ) .or. ( abs( shift(3) ) > small ) ) then
-             drij = pbc_dr( xyz(:,j_atom), xyz(:,i_atom), shift(:) )
-             xyz(:,i_atom) = xyz(:,j_atom) + drij(:)
-          endif
-       enddo
-    endif
+       ! set pointers for this data structure to target molecule
+       ! we will be just using xyz coordinates here
+       ! note we are changing global atom_data%xyz data structure with pointer !
+       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+
+       n_atom = molecule_data(i_mole)%n_atom
+       if ( n_atom > 1 ) then
+       ! shift atoms in molecule with respect to the preceding atom
+          do i_atom=2, n_atom
+             j_atom = i_atom - 1
+             shift(:) = pbc_shift( single_molecule_data%xyz(:, j_atom), single_molecule_data%xyz(:, i_atom) , box , xyz_to_box_transform )
+
+             if ( ( abs( shift(1) ) > small ) .or. ( abs( shift(2)) > small ) .or. ( abs( shift(3) ) > small ) ) then
+                drij = pbc_dr( single_molecule_data%xyz(:,j_atom), single_molecule_data%xyz(:,i_atom), shift(:) )
+                single_molecule_data%xyz(:,i_atom) = single_molecule_data%xyz(:,j_atom) + drij(:)
+             endif
+          enddo
+       endif
+    enddo
 
   end subroutine fix_intra_molecular_shifts
 
@@ -1140,43 +1079,61 @@ contains
 
 
   !*****************************************************
-  ! this subroutine translates molecule back into box if it
+  ! this subroutine translates molecules back into box if it
   ! has been moved out
   !*****************************************************
-  subroutine shift_move(n_atom,xyz,r_com,box,xyz_to_box_transform)
-    implicit none
-    integer,intent(in)::n_atom
-    real*8,dimension(:,:),intent(inout)::xyz
-    real*8,dimension(:),intent(inout)::r_com
-    real*8,dimension(:,:),intent(in)::box, xyz_to_box_transform
+ subroutine shift_molecules_into_box( n_mole, molecule_data , atom_data, box, xyz_to_box_transform  )
+    use global_variables
+    integer, intent(in) :: n_mole
+    type(molecule_data_type), intent(in) :: molecule_data
+    type(atom_data_type), intent(inout)  :: atom_data
+    real*8, dimension(:,:), intent(in) box, xyz_to_box_transform
+
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
 
     real*8,dimension(3) :: dr_box,shift,temp_xyz
-    integer::i,j,i_atom
+    integer:: i_mole, i_atom, i, j
     real*8::dist
 
-    ! general box, transform coordinates to box vector
-    dr_box = matmul ( xyz_to_box_transform , r_com )
-    do i = 1, 3
-       shift(i)=0d0
-       if ( dr_box(i) < 0d0 ) then
-          shift(i)=1d0
-       elseif( dr_box(i) > 1d0 ) then
-          shift(i)=-1d0
-       endif
-    enddo
-    temp_xyz(:) = 0.0
-    do i = 1, 3
-       do j = 1 , 3
-          temp_xyz(i) = temp_xyz(i) + shift(j)*box(j,i)
+    ! loop over molecules
+    do i_mole = 1 , n_mole
+
+       ! set pointers for this data structure to target molecule
+       ! we will be just using xyz coordinates here
+       ! note we are changing global atom_data%xyz data structure with pointer !
+       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+
+       ! general box, transform coordinates to box vector
+       dr_box = matmul ( xyz_to_box_transform , molecule_data(i_mole)%r_com )
+       do i = 1, 3
+          shift(i)=0d0
+          if ( dr_box(i) < 0d0 ) then
+             shift(i)=1d0
+          elseif( dr_box(i) > 1d0 ) then
+             shift(i)=-1d0
+          endif
        enddo
-    enddo
-    r_com(:)=r_com(:)+temp_xyz(:)
-    do i_atom = 1,n_atom
-       xyz(:,i_atom)=xyz(:,i_atom) + temp_xyz(:)
-    enddo
 
+       temp_xyz(:) = 0.0
+       do i = 1, 3
+          do j = 1 , 3
+             temp_xyz(i) = temp_xyz(i) + shift(j)*box(j,i)
+          enddo
+       enddo
 
-  end subroutine shift_move
+       ! shift center of mass back into box
+       molecule_data(i_mole)%r_com(:)=molecule_data(i_mole)%r_com(:)+temp_xyz(:)
+
+       ! shift atom positions
+       do i_atom = 1, molecule_data(i_mole)%n_atom
+          single_molecule_data%xyz(:,i_atom)=single_molecule_data%xyz(:,i_atom) + temp_xyz(:)
+       enddo
+
+    enddo  ! end loop over molecules
+
+  end subroutine shift_molecules_into_box
 
 
 
@@ -1853,10 +1810,11 @@ contains
   ! velocity is output in A/ps
   ! ang velocity is output in ps^-1
   !********************************
-  subroutine max_boltz(vel,mass,temp)
+  subroutine max_boltz(vel,mass,temperature,kB)
     implicit none
     real*8,dimension(2),intent(out)::vel
-    real*8,intent(in)::mass,temp
+    real*8,intent(in)::mass,temperature,kB
+
     real*8::rsq
     real*8,parameter::small=1D-4
 
@@ -1874,16 +1832,17 @@ contains
        vel=vel*rsq
 
        !now multiply by stdev of mb distribution
-       vel=vel*sqrt(8.314*temp/(mass/1000.))
-       !now convert to A/ps for velocity
-       !if this is angular velocity, inertia(mass) is input in g/mol*Ang^2, so this converts to ps^-1
-       vel=vel/100.
+       vel=vel*sqrt(kB*1000d0*temperature/(mass/1000d0))  ! kB is kJ/mol/K convert to J, convert mass to kg/mol
+       !now convert from m/s to A/ps
+       vel=vel/100d0
 
     else
        vel=0d0
     endif
 
   end subroutine max_boltz
+
+
 
   !***************************
   ! this computes the determinant of a 3x3 matrix

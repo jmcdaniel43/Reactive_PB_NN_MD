@@ -30,7 +30,7 @@ OPT="-openmp -static -check bounds -check uninit -check format -warn declaration
 #/opt/intel/mkl/10.0.3.020/include/mkl_dfti.f90
 
 $COMPILER $OPT -c glob_v.f90 read_simulation_parameters.f90 general_routines.f90 -I$MKLLIB -I$MKLMOD -I$OMPINCLUDE
-$COMPILER $OPT -c intra_bonded_interactions.f90 electrostatics.f90 pair_int.f90 -I$MKLLIB -I$MKLMOD -I$OMPINCLUDE
+$COMPILER $OPT -c intra_bonded_interactions.f90 electrostatics.f90 pair_int_real_space.f90 -I$MKLLIB -I$MKLMOD -I$OMPINCLUDE
 $COMPILER $OPT -c pme.f90 explicit_three_body_interaction.f90 -I$MKLLIB -I$MKLMOD -I$OMPINCLUDE
 $COMPILER $OPT -c eq_drude.f90 total_energy_forces.f90 ms_evb.f90 initialize_routines.f90 frprmn.f90 sampling.f90 ms_evb_fitting.f90 main_ms_evb.f90  -I$MKLLIB -I$MKLMOD -I$OMPINCLUDE
 #$COMPILER $OPT *.o -L$MKLLIB -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -L$OMPINCLUDE -o main_ms_evb

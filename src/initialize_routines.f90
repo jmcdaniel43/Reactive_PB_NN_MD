@@ -16,7 +16,6 @@ contains
   !*************************************************************************
   subroutine initialize_simulation(system_data, molecule_data, atom_data, integrator_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
     use global_variables
-    use pairwise_interaction
     use pme_routines
     use bonded_interactions
     Type(system_data_type),intent(inout)                :: system_data
@@ -34,10 +33,6 @@ contains
     real*8, dimension(:),   intent(inout) :: charge
     integer, dimension(:),  intent(inout) :: atom_type_index  
     character(*)(:), intent(inout)        :: aname
-
-    !******** this is a local data structure with pointers that will be set
-    ! to subarrays of atom_data arrays for the specific atoms in the molecule
-    type(single_molecule_data_type) :: single_molecule_data
 
     integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: gen_cross_terms
     real*8,dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,9) :: temp_lj_parameter
@@ -89,21 +84,22 @@ contains
     Select Case( restart_trajectory )
     Case("yes")
        call read_velocity_restart_checkpoint( file_io_data%ifile_velocity_file_h, file_io_data%ifile_velocity, atom_data%velocity, n_old_trajectory )
+    case default
+    ! open velocity_checkpoint file for printing if we are checkpointing velocities
+       Select Case(checkpoint_velocity)
+       Case("yes")
+            open( file_io_data%ifile_velocity_file_h, file=file_io_data%ifile_velocity, status='new' )
+       End Select
     End Select
 
+    ! system volume
+    system_data%volume = volume( box(1,:),box(2,:),box(3,:) )
 
     ! initialize the transformation matrix to box coordinates
     call initialize_non_orth_transform ( system_data%box, system_data%xyz_to_box_transform )
 
     !***************** make sure molecules are not broken up by a box translation, as this can happen in GROMACs, and could be using GROMACS output as input here
-    do i_mole=1,system_data%n_mole
-       ! set pointers for this data structure to target molecule
-       ! we will be just using xyz coordinates here
-       ! note we are changing global atom_data%xyz data structure with pointer !
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
-       call fix_intra_molecular_shifts( molecule_data(i_mole)%n_atom, single_molecule_data%xyz , system_data%box,  system_data%xyz_to_box_transform )
-    enddo
-
+    call fix_intra_molecular_shifts( system_data%n_mole , molecule_data , atom_data , system_data%box,  system_data%xyz_to_box_transform )
 
     !***************** make sure cutoff distances are fine for box size, and
     !that box type is supported
@@ -144,13 +140,9 @@ contains
 
     ! center of mass
     call update_r_com( system_data%n_mole, molecule_data, atom_data )
+
     ! center of mass of molecule might be outside of box after calling subroutine check_intra_molecular_shifts, fix this
-    do i_mole=1,n_mole
-       ! set pointers for this data structure to target molecule
-       ! we will be just using xyz coordinates here
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
-       call shift_move(molecule_data(i_mole)%n_atom,single_molecule_data%xyz,molecule_data(i_mole)%r_com,system_data%box, system_data%xyz_to_box_transform)
-    enddo
+    call shift_molecules_into_box( system_data%n_mole , molecule_data , atom_data , system_data%box,  system_data%xyz_to_box_transform )
 
 
     ! generate exclusions, note that some exclusions may have already been explicity read in
@@ -182,12 +174,12 @@ contains
        ! allocate column major
        size=PME_data%spline_order**3
        allocate( dQ_dr(3,size,system_data%total_atoms) , dQ_dr_index(3,size,system_data%total_atoms) )
-       allocate(atom_list_force_recip(3,system_data%total_atoms) )
+       allocate(force_recip(3,system_data%total_atoms) )
 
        ! setup pointers
        PME_data%dQ_dr=>dQ_dr
        PME_data%dQ_dr_index=>dQ_dr_index
-       PME_data%atom_list_force_recip=>atom_list_force_recip
+       PME_data%force_recip=>force_recip
     End Select
 
 
@@ -209,7 +201,6 @@ contains
   !**************************************************!
   subroutine initialize_energy_force(system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     use global_variables
-    use pairwise_interaction
     use pme_routines
     use MKL_DFTI
     use total_energy_forces
@@ -250,12 +241,12 @@ contains
 
     ! compute CB array 
     a(:) = box(1,:);b(:) = box(2,:);c(:) = box(3,:)
-    call crossproduct( a, b, kc ); kc = kc / system_data%volume_box 
-    call crossproduct( b, c, ka ); ka = ka / system_data%volume_box
-    call crossproduct( c, a, kb ); kb = kb / system_data%volume_box
+    call crossproduct( a, b, kc ); kc = kc / system_data%volume 
+    call crossproduct( b, c, ka ); ka = ka / system_data%volume
+    call crossproduct( c, a, kb ); kb = kb / system_data%volume
     kk(1,:)=ka(:);kk(2,:)=kb(:);kk(3,:)=kc(:)
 
-    call CB_array(PME_data%CB,PME_data%alpha_sqrt,system_data%volume_box,pme_grid,kk,PME_data%spline_order)
+    call CB_array(PME_data%CB,PME_data%alpha_sqrt,system_data%volume,pme_grid,kk,PME_data%spline_order)
 
     ! grid B_splines
        if (PME_data%spline_order .eq. 6) then
@@ -384,8 +375,6 @@ contains
        if ( atype_freeze(i_type) == 1 ) then
           write(*,*) "NOTE: Atomtype ", atype_name(i_type)," will be frozen during the simulation"
        end if
-
-       !      read(file_h,*) atype_name(i_type),atype_chg(i_type),atype_lj_parameter(i_type,i_type,1),atype_lj_parameter(i_type,i_type,2),atype_lj_parameter(i_type,i_type,3),atype_pol(i_type)
 
        ! move spaces for matching
        call trim_end( atype_name(i_type) )
@@ -720,7 +709,7 @@ contains
     endif
 
     molecule_type_name(n_molecule_type)=molecule_data(i_mole)%mname
-    molecule_index(i_mole)= n_molecule_type
+    molecule_data(i_mole)%molecule_type_index = n_molecule_type
 
     ! loop over rest of molecules
     do i_mole =2, n_mole
@@ -761,7 +750,7 @@ contains
              endif
 
              ! here we have matched this molecule with an old molecule type.  Record the index
-             molecule_index(i_mole) = j_mole
+             molecule_data(i_mole)%molecule_type_index = j_mole
              old_type = 1
 100          continue
           endif
@@ -792,13 +781,14 @@ contains
              molecule_type(n_molecule_type,molecule_data(i_mole)%n_atom+1 ) = MAX_N_ATOM_TYPE + 1
           end if
           molecule_type_name(n_molecule_type) = molecule_data(i_mole)%mname
-          molecule_index(i_mole)= n_molecule_type
+          molecule_data(i_mole)%molecule_type_index= n_molecule_type
 
        endif
     enddo
 
 
   end subroutine gen_molecule_type_data
+
 
 
 
