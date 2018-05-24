@@ -110,6 +110,7 @@ implicit none
   integer, dimension(MAX_N_MOLE_TYPE) :: evb_heavy_acid_index
   !***********************************************************
 
+
   !************************ defined type to store general system information
   type system_data_type
    integer :: n_mole  ! this is number of molecules in system

@@ -17,9 +17,9 @@ contains
   subroutine intra_molecular_energy_force( system_data, molecule_data, atom_data )
     use global_variables
     use omp_lib
-    type(system_data_type)   :: system_data
-    type(molecule_data_type) :: molecule_data
-    type(atom_data_type)     :: atom_data
+    type(system_data_type) , intent(in)  :: system_data
+    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type(atom_data_type) , intent(inout) :: atom_data
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -40,7 +40,7 @@ contains
        i_mole_type = molecule_data(i_mole)%molecule_type_index
 
        ! set pointers for single_molecule_data to target molecule subarrays of atom_data
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz, atom_force=atom_data%force, atom_type_index=atom_data%atom_type_index )
 
        ! bond energy, force for molecule
        call intra_molecular_bond_energy_force( E_bond, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )

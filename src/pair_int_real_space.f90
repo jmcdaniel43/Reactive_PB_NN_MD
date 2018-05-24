@@ -72,11 +72,11 @@ contains
     use omp_lib
     implicit none
 
-    Type(system_data_type),intent(inout)                :: system_data
-    Type(molecule_data_type),dimension(:),intent(inout) :: molecule_data
-    Type(atom_data_type),intent(inout)                  :: atom_data
-    Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
-    Type(PME_data_type), intent(inout)                  :: PME_data
+    Type(system_data_type),intent(inout)             :: system_data
+    Type(molecule_data_type),dimension(:),intent(in) :: molecule_data
+    Type(atom_data_type),intent(inout)               :: atom_data
+    Type(verlet_list_data_type),intent(in)           :: verlet_list_data
+    Type(PME_data_type), intent(in)                  :: PME_data
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -104,9 +104,12 @@ contains
       if( molecule_data(i_mole)%n_atom > 1) then
 
         ! set pointers for this data structure to target molecule
-        call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+        call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index , atom_xyz=atom_data%xyz , atom_force=atom_data%force, atom_charge=atom_data%charge, atom_type_index=atom_data%atom_type_index )
 
-        call intra_molecular_pairwise_energy_force( system_data, single_molecule_data ,  molecule_data(i_mole)%molecule_type_index , molecule_data(i_mole)%n_atom, PME_data )
+        ! here we explicitly pass energy and force data structures to be modified.  This is redundant in this case, since we are just updating
+        ! the system_data and single_molecule_data (atom_data) structures, but we allow this flexibility for calls within the MS-EVB subroutines in
+        ! which case we want to use local data structures
+        call intra_molecular_pairwise_energy_force( single_molecule_data%force, system_data%E_elec, system_data%E_vdw, system_data, single_molecule_data ,  molecule_data(i_mole)%molecule_type_index , molecule_data(i_mole)%n_atom, PME_data )
        endif
     enddo
 
@@ -152,7 +155,7 @@ contains
 
     integer , dimension(:) , allocatable    :: cutoff_mask
     real*8, dimension(3,3)   :: box, xyz_to_box_transform
-    real*8                   :: ewald_cutoff2, erfc_value, alpha_sqrt, erf_factor, E_elec, E_vdw, E_elec_local , E_vdw_local
+    real*8                   :: real_space_cutoff2, erfc_value, alpha_sqrt, erf_factor, E_elec, E_vdw, E_elec_local , E_vdw_local
     integer                  :: split_do, total_atoms, n_neighbors, n_cutoff, size_lj_parameter
     integer :: i, i_atom, j_atom, thread_id, i_thread, verlet_start, verlet_finish, i_index
     real*8, dimension(3)     :: xyz_i_atom(3)
@@ -163,7 +166,7 @@ contains
     local_force = 0.D0
     temp_force= 0.D0
     ! real_space_cutoff is a global variable
-    ewald_cutoff2 = real_space_cutoff ** 2
+    real_space_cutoff2 = real_space_cutoff ** 2
 
     ! store small data structures as local variable for convenience
     total_atoms          = system_data%total_atoms
@@ -183,7 +186,7 @@ contains
 
     !**************************************** use Verlet list ****************************************************************
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data%xyz, atom_data%charge, total_atoms, box, temp_force, ewald_cutoff2, split_do , xyz_to_box_transform, size_lj_parameter, erf_factor, alpha_sqrt,verlet_list_data%verlet_point,verlet_list_data%neighbor_list, PME_data%erfc_table) REDUCTION(+:E_elec,E_vdw)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data%xyz, atom_data%charge, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, size_lj_parameter, erf_factor, alpha_sqrt,verlet_list_data%verlet_point,verlet_list_data%neighbor_list, PME_data%erfc_table) REDUCTION(+:E_elec,E_vdw)
     !$OMP CRITICAL
     local_force = 0.D0
     !$OMP END CRITICAL
@@ -235,7 +238,7 @@ contains
           cutoff_mask=0
           n_cutoff=0
           do j_atom = 1 , n_neighbors
-             if ( pairwise_neighbor_data_verlet%dr2(j_atom) < ewald_cutoff2 ) then
+             if ( pairwise_neighbor_data_verlet%dr2(j_atom) < real_space_cutoff2 ) then
                 cutoff_mask(j_atom) = 1
                 n_cutoff = n_cutoff + 1
              endif
@@ -374,9 +377,14 @@ contains
   ! the molecule block of associated global atom_type data structures, and so when
   ! we manipulate these quantities we are manipulating the global data 
   !
+  ! We input/output local energy, force data structures, as this will be used in
+  ! MS-EVB routines and we don't necessarily want to update the
+  ! global force, energy data.
   !*******************************************
-  subroutine intra_molecular_pairwise_energy_force( system_data, single_molecule_data , i_mole_type , n_atom, PME_data  )
+  subroutine intra_molecular_pairwise_energy_force( force_local, E_elec, E_vdw, system_data, single_molecule_data , i_mole_type , n_atom, PME_data  )
     use global_variables
+    real*8, dimension(:,:), intent(inout) :: force_local
+    real*8, intent(inout)                 :: E_elec, E_vdw
     type(system_data_type), intent(inout) :: system_data
     type(single_molecule_data_type), intent(inout) :: single_molecule_data
     type(PME_data_type) , intent(in)    :: PME_data
@@ -457,29 +465,29 @@ contains
        ! first remove intra-molecular PME contributions for excluded atoms
        if ( n_excluded > 0 ) then
            call intra_pme_exclusion( E_elec_local , pairwise_neighbor_data_excluded%f_ij ,  pairwise_neighbor_data_excluded%dr, pairwise_neighbor_data_excluded%dr2, pairwise_neighbor_data_excluded%qi_qj, erf_factor , alpha_sqrt , constants%conv_e2A_kJmol )
-           system_data%E_elec = system_data%E_elec + E_elec_local
+           E_elec = E_elec + E_elec_local
        endif
            
        ! now add non-excluded intra-molecular real-space electrostatic and VDWs interactions
        if ( n_nonexcluded > 0 ) then
            call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_nonexcluded%f_ij ,  pairwise_neighbor_data_nonexcluded%%dr, pairwise_neighbor_data_nonexcluded%%dr2,  pairwise_neighbor_data_nonexcluded%%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )
            call pairwise_real_space_LJ( E_vdw_local , pairwise_neighbor_data_nonexcluded%%f_ij ,  pairwise_neighbor_data_nonexcluded%%dr, pairwise_neighbor_data_nonexcluded%%dr2 , pairwise_neighbor_data_nonexcluded%%atype_lj_parameter )
-           system_data%E_elec = system_data%E_elec + E_elec_local
-           system_data%E_vdw  = system_data%E_vdw  + E_vdw_local
+           E_elec = E_elec + E_elec_local
+           E_vdw  = E_vdw  + E_vdw_local
        endif
 
        ! add forces from exclusions...
        do i_index=1, n_excluded
            j_atom = pairwise_neighbor_data_excluded%atom_index(i_index)
-           single_molecule_data%force(:,i_atom) =  single_molecule_data%force(:,i_atom) + pairwise_neighbor_data_exclusion%f_ij(:,i_index)
-           single_molecule_data%_force(:,j_atom) = single_molecule_data%_force(:,j_atom) - pairwise_neighbor_data_exclusion%f_ij(:,i_index)
+           force_local(:,i_atom) =  force_local(:,i_atom) + pairwise_neighbor_data_exclusion%f_ij(:,i_index)
+           force_local(:,j_atom) =  force_local(:,j_atom) - pairwise_neighbor_data_exclusion%f_ij(:,i_index)
        enddo
 
        ! add forces from non-excluded interactions...
        do i_index=1, n_nonexcluded
            j_atom = pairwise_neighbor_data_nonexcluded%atom_index(i_index)
-           single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) + pairwise_neighbor_data_nonexclusion%f_ij(:,i_index)
-           single_molecule_data%_force(:,j_atom) = single_molecule_data%_force(:,j_atom) - pairwise_neighbor_data_nonexclusion%f_ij(:,i_index)
+           force_local(:,i_atom) = force_local(:,i_atom) + pairwise_neighbor_data_nonexclusion%f_ij(:,i_index)
+           force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_nonexclusion%f_ij(:,i_index)
        enddo
 
 

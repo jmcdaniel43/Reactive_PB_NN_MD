@@ -39,10 +39,10 @@ contains
     use MKL_DFTI
     use omp_lib
     implicit none
-    type(system_data_type)   :: system_data
-    type(molecule_data_type) :: molecule_data
-    type(atom_data_type)     :: atom_data
-    type(PME_data_type)      :: PME_data 
+    type(system_data_type), intent(inout)   :: system_data
+    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type(atom_data_type) , intent(inout)    :: atom_data
+    type(PME_data_type)  , intent(inout)    :: PME_data 
 
     real*8, dimension(:,:),allocatable::xyz_scale
     real*8 :: pme_Erecip, force(3)
@@ -71,8 +71,8 @@ contains
     endif
     !************************************************************************!
 
-    ! grid_Q
-    call grid_Q(Q_grid,atom_data%charge,atom_data%xyz,K,n)
+    ! grid_Q, use scaled coordinates
+    call grid_Q(Q_grid,atom_data%charge,xyz_scale,K,n)
 
 
     !****************************timing**************************************!
@@ -174,10 +174,10 @@ contains
     PME_data%force_recip=0d0
 
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,theta_conv_Q,PME_data%force_recip,atom_data%xyz,atom_data%charge,K,system_data%box,n,kk,split_do,constants%conv_e2A_kJmol) 
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,theta_conv_Q,PME_data%force_recip,xyz_scale,atom_data%charge,K,system_data%box,n,kk,split_do,constants%conv_e2A_kJmol) 
     !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,total_atoms
-       call derivative_grid_Q(force, theta_conv_Q, atom_data%charge,atom_data%xyz,i_atom,K,system_data%box,n,kk,constants%conv_e2A_kJmol)
+       call derivative_grid_Q(force, theta_conv_Q, atom_data%charge, xyz_scale, i_atom,K,system_data%box,n,kk,constants%conv_e2A_kJmol)
        PME_data%force_recip(:,i_atom)=PME_data%force_recip(:,i_atom)+force(:)
     enddo
     !$OMP END DO NOWAIT
@@ -298,24 +298,22 @@ contains
   ! we have also changed loop over kvectors to loop over last index of Q_grid first,
   ! to more efficiently pull from memory
   !*********************************
-  subroutine modify_Q_grid( Q , i_mole, chg, xyz, n_atom, K, n, operation)
+  subroutine modify_Q_grid( Q , chg, xyz, n_atom, K, n, spline_grid, operation)
     use global_variables
-    integer, intent(in) :: i_mole
-    integer, intent(in), dimension(:) :: n_atom
-    real*8, intent(in), dimension(:,:) :: chg
-    real*8, intent(in), dimension(:,:,:) :: xyz
-    integer,intent(in)::K,n
+    integer, intent(in)              :: n_atom
+    real*8, intent(in), dimension(:) :: chg
+    real*8, intent(in), dimension(:,:) :: xyz
+    integer,intent(in)::K,n, spline_grid
     real*8,dimension(:,:,:),intent(inout)::Q
     integer, intent(in) :: operation
     integer::i,j,k1,k2,k3,n1,n2,n3,nn1,nn2,nn3,nearpt(3),splindex(3)
-    real*8::sum,chg_i
+    real*8::sum
     real*8,dimension(3)::u,arg
     real*8 :: small=1D-6
-    i= i_mole
-    do j=1,n_atom(i)
-       chg_i=chg(i,j)
-       if ( abs(chg_i) > small ) then
-          u=xyz(i,j,:)
+
+    do j=1,n_atom
+       if ( abs(chg(j)) > small ) then
+          u=xyz(:,j)
           nearpt=floor(u)
           ! loop over outer index of Q grid first, to more efficiently use memory
           do k3=0,n-1
@@ -339,9 +337,9 @@ contains
                    sum=0d0
                    splindex = ceiling(arg/6.D0*dble(spline_grid))
                    if(spline_order .eq.6) then
-                      sum=chg_i*B6_spline(splindex(1))*B6_spline(splindex(2))*B6_spline(splindex(3))
+                      sum=chg(j)*B6_spline(splindex(1))*B6_spline(splindex(2))*B6_spline(splindex(3))
                    else
-                      sum=chg_i*B4_spline(splindex(1))*B4_spline(splindex(2))*B4_spline(splindex(3))      
+                      sum=chg(j)*B4_spline(splindex(1))*B4_spline(splindex(2))*B4_spline(splindex(3))      
                    endif
                    if ( operation < 0 ) then
                       Q(n1+1,n2+1,n3+1)=Q(n1+1,n2+1,n3+1)-sum

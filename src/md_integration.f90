@@ -8,22 +8,28 @@ contains
   !*************************************************************************
   !  this subroutine controls what ensemble to run, and calls appropriate subroutines
   !  currently, only NVE molecular dynamics is implemented
+  !
+  !  data structure molecule_data will be changed if MS-EVB simulation, and we
+  !  have proton hop, hence intent(inout)
+  !
+  !  verlet_list will be changed in energy routines if needs update
   !*************************************************************************
 
-  subroutine mc_sample( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data )
+  subroutine mc_sample( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
     use global_variables
-    type( system_data_type )     :: system_data
-    type( molecule_data_type )   :: molecule_data
-    type( atom_data_type )       :: atom_data
-    type( integrator_data_type ) :: integrator_data
-    type(verlet_list_data_type)  :: verlet_list_data
-    type(PME_data_type)          :: PME_data
+    type( system_data_type ) , intent(inout)    :: system_data
+    type( molecule_data_type ), dimension(:), intent(inout) :: molecule_data
+    type( atom_data_type )  , intent(inout)   :: atom_data
+    type( integrator_data_type ) , intent(in) :: integrator_data
+    type(verlet_list_data_type) , intent(inout)  :: verlet_list_data
+    type(PME_data_type)     , intent(inout)      :: PME_data
+    type(file_io_data_type) , intent(in)         :: file_io_data
 
 
     Select Case (select_ensemble)
     Case("NVE")
        !*********************** this is nve md ******************************!
-       call md_integrate_atomic( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data )
+       call md_integrate_atomic( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
     case default
        stop "Currently, only NVE ensemble is implemented"
     end select
@@ -44,8 +50,8 @@ contains
     use global_variables
     integer,dimension,intent(in) :: n_mole,n_atom
     real*8,   intent(in)         :: temperature
-    type(molecule_data_type)     :: molecule_data
-    type(atom_data_type)         :: atom_data
+    type(molecule_data_type), dimension(:),intent(in) :: molecule_data
+    type(atom_data_type) , intent(inout)   :: atom_data
 
     ! allocate temporary arrays here for convenience
     real*8,dimension(:), allocatable :: mass
@@ -123,7 +129,7 @@ contains
   subroutine subtract_center_of_mass_momentum(n_mole, molecule_data, atom_data )
     use global_variables
     integer,intent(in)::n_mole
-    type(molecule_data_type) , intent(in) :: molecule_data
+    type(molecule_data_type) , dimension(:), intent(in) :: molecule_data
     type(atom_data_type) , intent(inout)  :: atom_data
 
     !******** this is a local data structure with pointers that will be set
@@ -141,7 +147,7 @@ contains
     do i_mole=1,n_mole
 
        ! set pointers for this data structure to target molecule
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_velocity=atom_data%velocity, atom_mass=atom_data%mass, atom_type_index=atom_data%atom_type_index )
 
        do i_atom=1, molecule_data(i_mole)%n_atom
           i_type = single_molecule_data%atom_type_index(i_atom)
@@ -159,7 +165,7 @@ contains
     do i_mole=1,n_mole
 
        ! set pointers for this data structure to target molecule
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_velocity=atom_data%velocity, atom_mass=atom_data%mass, atom_type_index=atom_data%atom_type_index )
 
        do i_atom=1, molecule_data(i_mole)%n_atom
           i_type = single_molecule_data%atom_type_index(i_atom)     
@@ -188,17 +194,23 @@ contains
   ! NOTE we have already checked for non-zero atomic masses in the sample_atomic_velocities
   ! subroutine, and so here we don't worry about it
   !
+  !  data structure molecule_data will be changed if MS-EVB simulation, and we
+  !  have proton hop, hence intent(inout)
+  !
+  !  verlet_list will be changed in energy routines if needs update
+  !
   !************************************************************************
-  subroutine md_integrate_atomic( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data )
+  subroutine md_integrate_atomic( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
     use global_variables
     use total_energy_forces
     use ms_evb
-    type( system_data_type )     :: system_data
-    type( molecule_data_type )   :: molecule_data
-    type( atom_data_type )       :: atom_data
-    type( integrator_data_type ) :: integrator_data
-    type(verlet_list_data_type)  :: verlet_list_data
-    type(PME_data_type)          :: PME_data
+    type( system_data_type ), intent(inout)     :: system_data
+    type( molecule_data_type ), dimension(:), intent(inout)   :: molecule_data
+    type( atom_data_type ) , intent(inout)      :: atom_data
+    type( integrator_data_type ), intent(in)    :: integrator_data
+    type(verlet_list_data_type), intent(inout)  :: verlet_list_data
+    type(PME_data_type)     , intent(inout)     :: PME_data
+    type(file_io_data_type) , intent(in)        :: file_io_data
 
     integer :: i_atom, i_type, total_atoms
     real*8  :: dt , conv_fac
@@ -241,7 +253,7 @@ contains
     !**********************get total forces and energies*****************************!
     Select Case(ms_evb_simulation)
     Case("yes")
-       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
+       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data%n_output )
     Case("no")
        call calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     End Select

@@ -19,10 +19,10 @@ contains
   !***********************************************************
   subroutine calculate_total_force_energy(system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     Type(system_data_type),intent(inout)                :: system_data
-    Type(molecule_data_type),dimension(:),intent(inout) :: molecule_data
+    Type(molecule_data_type),dimension(:),intent(in)    :: molecule_data
     Type(atom_data_type),intent(inout)                  :: atom_data
     Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
-    Type(PME_data_type), intent(inout)                  :: PME_data
+    Type(PME_data_type), intent(inout)                     :: PME_data
 
     integer :: flag_verlet_list, flag_junk
 

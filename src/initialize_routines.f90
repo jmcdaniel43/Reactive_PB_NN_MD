@@ -141,7 +141,7 @@ contains
     ! center of mass
     call update_r_com( system_data%n_mole, molecule_data, atom_data )
 
-    ! center of mass of molecule might be outside of box after calling subroutine check_intra_molecular_shifts, fix this
+    ! center of mass of molecule might be outside of box after calling subroutine fix_intra_molecular_shifts, fix this
     call shift_molecules_into_box( system_data%n_mole , molecule_data , atom_data , system_data%box,  system_data%xyz_to_box_transform )
 
 
@@ -698,7 +698,7 @@ contains
     ! first molecule type is first molecule in input file
     i_mole = 1
     ! attach pointers to atom subarrays for 1st molecule
-    call return_molecule_block( single_molecule_data , atom_data, molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+    call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_type_index=atom_data%atom_type_index )
     n_molecule_type = 1
     do i_atom=1, molecule_data(i_mole)%n_atom
        molecule_type(n_molecule_type,i_atom) = single_molecule_data%atom_type_index(i_atom)
@@ -714,7 +714,7 @@ contains
     ! loop over rest of molecules
     do i_mole =2, n_mole
     ! reattach pointers to atom subarrays for new molecule
-    call return_molecule_block( single_molecule_data , atom_data, molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+    call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_type_index=atom_data%atom_type_index )
 
        old_type =0
        flag_name=0

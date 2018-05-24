@@ -233,7 +233,7 @@ contains
   subroutine read_gro( file_handle, system_data, molecule_data, atom_data, aname, xyz )
    integer, intent(in) :: file_handle
    type(system_data_type), intent(inout) :: system_data
-   type(molecule_data_type), intent(inout) :: molecule_data
+   type(molecule_data_type), dimension(:), intent(inout) :: molecule_data
    type(atom_data_type) , intent(inout)  :: atom_data
    character(*), dimension(:), intent(in):: aname
    real*8, dimension(:,:), intent(in) :: xyz
@@ -451,7 +451,7 @@ contains
     use global_variables
     implicit none
     integer, intent(in)                      :: n_mole
-    type(molecule_data_type), intent(inout)  :: molecule_data
+    type(molecule_data_type), dimension(:), intent(inout)  :: molecule_data
     type(atom_data_type), intent(inout)      :: atom_data
 
     !******** this is a local data structure with pointers that will be set
@@ -462,7 +462,7 @@ contains
 
     do i_mole = 1, n_mole
        ! set pointers for this data structure to target molecule
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz, atom_mass=atom_data%mass )
 
        molecule_data(i_mole)%r_com(:) = pos_com( single_molecule_data%xyz, molecule_data(i_mole)%n_atom, single_molecule_data%mass )
     end do
@@ -529,7 +529,7 @@ contains
   ! by input integer "K" (pme_grid), using the
   ! reciprocal lattice vectors
   !********************************************
-  subroutine create_scaled_direct_coordinates(xyz_scale, xyz, n_mole, n_atom, kk, K)
+  subroutine create_scaled_direct_coordinates(xyz_scale, xyz, n_atom, kk, K)
     real*8,dimension(:,:),intent(out) :: xyz_scale
     real*8,dimension(:,:),intent(in) :: xyz
     integer, dimension(:),intent(in) :: n_atom
@@ -606,6 +606,7 @@ contains
     real*8, intent(in), dimension(3) :: shift, ri, rj
     pbc_dr(:) = rj(:) - ri(:) - shift(:)
   end function pbc_dr
+
 
 
 
@@ -723,16 +724,31 @@ contains
 
   !*********************************
   ! this function returns single_molecule_data_type structure
-  ! which sets pointers to an array block
-  ! of atoms that constitutes a molecule
+  ! which sets pointers to an array block of atoms that constitutes a molecule
   ! This local datastructure of pointers should be destroyed after use
+  !
+  ! while these pointers are generally set to point to the atom_data structure,
+  ! we allow flexibility so that pointers can be set to temporary local data
+  ! structures.  
+  !
+  ! we only set pointers for data structures that are input.
+  ! all input data structures should be atomic data structures
+  ! that have size total_atoms
   !*********************************
-  subroutine return_molecule_block( single_molecule_data, atom_data, n_atom, atom_index )
+  subroutine return_molecule_block( single_molecule_data, n_atom, atom_index, atom_xyz, atom_velocity, atom_force, atom_mass, atom_charge, atom_type_index, atom_name )
     use global_variables
     type(single_molecule_data_type), intent(out) :: single_molecule_data
-    type(atom_data_type), intent(in)             :: atom_data
     integer, intent(in)                          :: n_atom
     integer, dimension(:), intent(in)            :: atom_index
+    !**** these are input atomic data structures for which we set pointers:  Not
+    ! all of these may be needed, so not all of them will be input
+    real*8, dimension(:,:), intent(in), optional :: atom_xyz
+    real*8, dimension(:,:), intent(in), optional :: atom_velocity
+    real*8, dimension(:,:), intent(in), optional :: atom_force
+    real*8, dimension(:), intent(in), optional :: atom_mass
+    real*8, dimension(:), intent(in), optional :: atom_charge
+    integer, dimension(:), intent(in), optional :: atom_type_index
+    character(*), dimension(:), intent(in), optional :: atom_name
 
     integer :: low_index, high_index
 
@@ -740,19 +756,57 @@ contains
     low_index = atom_index(1)
     high_index = atom_index(n_atom)
 
-    ! if pointers are associated, deallocate
-    if ( associated(single_molecule_data%xyz) .or. associated(single_molecule_data%velocity) .or.  associated(single_molecule_data%force) .or.  associated(single_molecule_data%mass) .or. associated(single_molecule_data%charge) .or.  associated(single_molecule_data%atom_type_index) .or.  associated(single_molecule_data%aname) ) then
-      deallocate( single_molecule_data%xyz, single_molecule_data%velocity, single_molecule_data%force, single_molecule_data%mass , single_molecule_data%charge, single_molecule_data%atom_type_index, single_molecule_data%aname )
-    end if
+    ! set pointers to molecule block of input atomic data structures that are present
+    ! atomic xyz data
+    if ( present(atom_xyz) ) then
+       if ( associated(single_molecule_data%xyz) ) then
+          deallocate( single_molecule_data%xyz )
+       endif
+       single_molecule_data%xyz=>atom_xyz(:,low_index:high_index)
+    endif
+    ! atomic velocity data
+    if ( present(atom_velocity) ) then
+       if ( associated(single_molecule_data%velocity) ) then
+          deallocate( single_molecule_data%velocity )
+       endif
+       single_molecule_data%velocity=>atom_velocity(:,low_index:high_index)
+    endif
+    ! atomic force data
+    if ( present(atom_force) ) then
+       if ( associated(single_molecule_data%force) ) then
+          deallocate( single_molecule_data%force )
+       endif
+       single_molecule_data%force=>atom_force(:,low_index:high_index)
+    endif
+    ! atomic mass data
+    if ( present(atom_mass) ) then
+       if ( associated(single_molecule_data%mass) ) then
+          deallocate( single_molecule_data%mass )
+       endif
+       single_molecule_data%mass=>atom_mass(low_index:high_index)
+    endif
+    ! atomic charge data
+    if ( present(atom_charge) ) then
+       if ( associated(single_molecule_data%charge) ) then
+          deallocate( single_molecule_data%charge )
+       endif
+       single_molecule_data%charge=>atom_charge(low_index:high_index)
+    endif
+    ! atom type index data
+    if ( present(atom_type_index) ) then
+       if ( associated(single_molecule_data%atom_type_index) ) then
+          deallocate( single_molecule_data%atom_type_index )
+       endif
+       single_molecule_data%atom_type_index=>atom_type_index(low_index:high_index)
+    endif
+    ! atomic name data
+    if ( present(atom_name) ) then
+       if ( associated(single_molecule_data%aname) ) then
+          deallocate( single_molecule_data%aname )
+       endif
+       single_molecule_data%aname=>atom_name(low_index:high_index)
+    endif
 
-    ! assign pointers to block of atoms in arrays
-    single_molecule_data%xyz=>atom_data%xyz(:,low_index:high_index)
-    single_molecule_data%velocity=>atom_data%velocity(:,low_index:high_index)
-    single_molecule_data%force=>atom_data%force(:,low_index:high_index)
-    single_molecule_data%mass=>atom_data%mass(low_index:high_index)
-    single_molecule_data%charge=>atom_data%charge(low_index:high_index)
-    single_molecule_data%atom_type_index=>atom_data%atom_type_index(low_index:high_index)
-    single_molecule_data%aname=>atom_data%aname(low_index:high_index)
 
   end subroutine return_molecule_block
 
@@ -863,10 +917,10 @@ contains
   subroutine print_step( traj_file, log_file, i_step, system_data, integrator_data, molecule_data, atom_data )
     use global_variables
     integer, intent(in) :: traj_file, log_file, i_step
-    type(system_data_type)     :: system_data
-    type(integrator_data_type) :: integrator_data
-    type(molecule_data_type)   :: molecule_data
-    type(atom_data_type)       :: atom_data
+    type(system_data_type) , intent(in)    :: system_data
+    type(integrator_data_type) , intent(in) :: integrator_data
+    type(molecule_data_type), dimension(:), intent(in)   :: molecule_data
+    type(atom_data_type)   , intent(in)    :: atom_data
 
     real*8 :: time_step
 
@@ -899,9 +953,9 @@ contains
     use global_variables
     integer, intent(in) :: grofile_h, i_step
     real*8, intent(in)  :: time_step
-    type(system_data_type)   :: system_data
-    type(molecule_data_type) :: molecule_data
-    type(atom_data_type)     :: atom_data
+    type(system_data_type), intent(in)   :: system_data
+    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type(atom_data_type) , intent(in)    :: atom_data
     
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -917,7 +971,7 @@ contains
     do i_mole =1 , system_data%n_mole
 
        ! set pointers for this data structure to target molecule
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz )
 
        do i_atom=1, molecule_data(i_mole)%n_atom
            ! print in nanometers for gro file
@@ -946,9 +1000,9 @@ contains
     use global_variables
     integer, intent(in)      :: velfile_h, i_step
     real*8,  intent(in)      :: delta_t
-    type(system_data_type)   :: system_data
-    type(molecule_data_type) :: molecule_data
-    type(atom_data_type)     :: atom_data
+    type(system_data_type), intent(in)   :: system_data
+    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type(atom_data_type) , intent(in)    :: atom_data
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -963,7 +1017,7 @@ contains
 
     do i_mole =1 , system_data%n_mole
        ! set pointers for this data structure to target molecule
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_velocity=atom_data%velocity, atom_name=atom_data%aname )
        do i_atom=1, molecule_data(i_mole)%n_atom
            write( velfile_h, '(I5,2A5,I5,3F14.6)' ) i_mole , molecule_data(i_mole)%mname , single_molecule_data%aname(i_atom), i_atom, single_molecule_data%velocity(:,i_atom)
        enddo
@@ -990,9 +1044,7 @@ contains
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
     type(single_molecule_data_type) :: single_molecule_data
 
-    integer ::  i_mole, i_atom, j_atom, n_atom
-    real*8,dimension(3) :: shift, drij
-    real*8,parameter :: small=1D-6
+    integer :: i_mole
 
     ! loop over molecules
     do i_mole = 1 , n_mole
@@ -1000,24 +1052,43 @@ contains
        ! set pointers for this data structure to target molecule
        ! we will be just using xyz coordinates here
        ! note we are changing global atom_data%xyz data structure with pointer !
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz )
+       call make_molecule_whole( molecule_data(i_mole)%n_atom , single_molecule_data%xyz , box, xyz_to_box_transform )
 
-       n_atom = molecule_data(i_mole)%n_atom
+    enddo
+
+  end subroutine fix_intra_molecular_shifts
+
+
+  
+
+  !******************** 
+  ! this subroutine removes any pbc shifts for atoms within a molecule
+  ! input xyz array should be pointer to coordinates of particular molecule
+  !********************
+  subroutine make_molecule_whole( n_atom , xyz, box, xyz_to_box_transform )
+    integer, intent(in) :: n_atom
+    real*8, dimension(:,:), intent(inout) :: xyz
+    real*8, dimension(:,:), intent(in) :: box, xyz_to_box_transform
+
+    integer ::  i_atom, j_atom
+    real*8,dimension(3) :: shift, drij
+    real*8,parameter :: small=1D-6
+
        if ( n_atom > 1 ) then
        ! shift atoms in molecule with respect to the preceding atom
           do i_atom=2, n_atom
              j_atom = i_atom - 1
-             shift(:) = pbc_shift( single_molecule_data%xyz(:, j_atom), single_molecule_data%xyz(:, i_atom) , box , xyz_to_box_transform )
-
+             shift(:) = pbc_shift( xyz(:, j_atom), xyz(:, i_atom) , box , xyz_to_box_transform )
              if ( ( abs( shift(1) ) > small ) .or. ( abs( shift(2)) > small ) .or. ( abs( shift(3) ) > small ) ) then
-                drij = pbc_dr( single_molecule_data%xyz(:,j_atom), single_molecule_data%xyz(:,i_atom), shift(:) )
-                single_molecule_data%xyz(:,i_atom) = single_molecule_data%xyz(:,j_atom) + drij(:)
+                drij = pbc_dr( xyz(:,j_atom), xyz(:,i_atom), shift(:) )
+                xyz(:,i_atom) = xyz(:,j_atom) + drij(:)
              endif
           enddo
        endif
-    enddo
 
-  end subroutine fix_intra_molecular_shifts
+  end subroutine make_molecule_whole
+
 
 
 
@@ -1085,7 +1156,7 @@ contains
  subroutine shift_molecules_into_box( n_mole, molecule_data , atom_data, box, xyz_to_box_transform  )
     use global_variables
     integer, intent(in) :: n_mole
-    type(molecule_data_type), intent(in) :: molecule_data
+    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
     type(atom_data_type), intent(inout)  :: atom_data
     real*8, dimension(:,:), intent(in) box, xyz_to_box_transform
 
@@ -1103,7 +1174,7 @@ contains
        ! set pointers for this data structure to target molecule
        ! we will be just using xyz coordinates here
        ! note we are changing global atom_data%xyz data structure with pointer !
-       call return_molecule_block( single_molecule_data , atom_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz )
 
        ! general box, transform coordinates to box vector
        dr_box = matmul ( xyz_to_box_transform , molecule_data(i_mole)%r_com )

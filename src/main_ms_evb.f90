@@ -104,7 +104,7 @@ program main_ms_evb
   do i_step = 1, integrator_data%n_step
      trajectory_step = n_old_trajectory + i_step
 
-     call  mc_sample( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data )
+     call  mc_sample( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
 
      if ( mod( i_step, integrator_data%n_output ) == 0 ) then
         call calculate_kinetic_energy( system_data%kinetic_energy, system_data%total_atoms, atom_data%mass, atom_data%velocity, constants%conv_kJmol_ang2ps2gmol )
