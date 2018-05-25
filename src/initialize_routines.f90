@@ -14,30 +14,30 @@ contains
   !*************************************************************************
   ! this routine  initializes the simulation
   !*************************************************************************
-  subroutine initialize_simulation(system_data, molecule_data, atom_data, integrator_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
+  subroutine initialize_simulation(system_data, molecule_data, atom_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
     use global_variables
     use pme_routines
     use bonded_interactions
     Type(system_data_type),intent(inout)                :: system_data
-    Type(molecule_data_type),dimension(:),intent(inout) :: molecule_data
+    Type(molecule_data_type),dimension(:),allocatable, intent(inout) :: molecule_data
     Type(atom_data_type),intent(inout)                  :: atom_data
-    Type(integrator_data_type),intent(inout)            :: integrator_data
     Type(file_io_data_type),intent(inout)               :: file_io_data
     Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
     Type(PME_data_type), intent(inout)                  :: PME_data
 
-    real*8, dimension(:,:), intent(inout) :: xyz
-    real*8, dimension(:,:), intent(inout) :: velocity
-    real*8, dimension(:,:), intent(inout) :: force
-    real*8, dimension(:),   intent(inout) :: mass
-    real*8, dimension(:),   intent(inout) :: charge
-    integer, dimension(:),  intent(inout) :: atom_type_index  
-    character(*)(:), intent(inout)        :: aname
+    real*8, dimension(:,:), allocatable, target, intent(inout) :: xyz
+    real*8, dimension(:,:), allocatable, target, intent(inout) :: velocity
+    real*8, dimension(:,:), allocatable, target, intent(inout) :: force
+    real*8, dimension(:), allocatable, target,   intent(inout) :: mass
+    real*8, dimension(:), allocatable, target,   intent(inout) :: charge
+    integer, dimension(:), allocatable, target,  intent(inout) :: atom_type_index  
+    character(*),dimension(:), allocatable, target, intent(inout)        :: aname
 
     integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: gen_cross_terms
-    real*8,dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,9) :: temp_lj_parameter
-    integer:: i_mole, total_atoms, size
+    integer:: total_atoms, size, flag_junk
 
+    !********** initialize constants in global variables
+    call initialize_constants( file_io_data , verlet_list_data , PME_data )
 
     !********** this is for generating random velocities for Maxwell-Boltzmann
     call initialize_random_seed
@@ -59,7 +59,7 @@ contains
     Select Case( restart_trajectory )
     Case("yes")
        call scan_grofile_restart( file_io_data%ifile_gro_file_h, n_old_trajectory )
-    Case default
+    End Select
 
     ! this will allocate aname, xyz arrays, and attach pointers from atom_data structure
     call read_gro( file_io_data%ifile_gro_file_h, system_data, molecule_data, atom_data, aname, xyz )
@@ -93,7 +93,7 @@ contains
     End Select
 
     ! system volume
-    system_data%volume = volume( box(1,:),box(2,:),box(3,:) )
+    system_data%volume = volume( system_data%box(1,:),system_data%box(2,:),system_data%box(3,:) )
 
     ! initialize the transformation matrix to box coordinates
     call initialize_non_orth_transform ( system_data%box, system_data%xyz_to_box_transform )
@@ -109,7 +109,7 @@ contains
     !************************************** get parameters****************************************************!
     ! get parameters for all atom types, assuming there are no more than MAX_N_ATOM_TYPE types of atoms total
     !*****************************************************************************************************!
-    call read_param( file_io_data_type%ifile_ffpmt_file_h, file_io_data_type%ifile_ffpmt,gen_cross_terms)
+    call read_param( file_io_data%ifile_ffpmt_file_h, file_io_data%ifile_ffpmt,gen_cross_terms)
     ! make sure we don't have too many atom types
     if ( n_atom_type > MAX_N_ATOM_TYPE ) then
        stop "number of atom types g.t. MAX_N_ATOM_TYPE.  Increase this value"
@@ -152,7 +152,7 @@ contains
 
     !*********************************initialize verlet list
     call allocate_verlet_list( verlet_list_data, system_data%total_atoms, system_data%volume )
-    call construct_verlet_list( verlet_list_data, atom_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
+    call construct_verlet_list( verlet_list_data, atom_data, molecule_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
     ! the "1" input to update_verlet_displacements signals to initialize the displacement array
     call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data , system_data%box, system_data%xyz_to_box_transform , flag_junk, 1 )
 
@@ -160,7 +160,7 @@ contains
     ! initialize ms_evb simulation
     Select Case(ms_evb_simulation)
     Case("yes")
-       call initialize_evb_simulation( system_data%n_mole, file_io_data )
+       call initialize_evb_simulation( system_data%n_mole, molecule_data, file_io_data )
        ! we are storing dQ_dr grid for ms-evb, allocate data arrays for this
 
        ! grid size:  each atom has spline_order^3 non-zero derivatives in the Q grid
@@ -199,7 +199,7 @@ contains
   ! therefore these data structures were given the intent(inout) attribute
   !
   !**************************************************!
-  subroutine initialize_energy_force(system_data, molecule_data, atom_data, verlet_list_data, PME_data )
+  subroutine initialize_energy_force(system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data )
     use global_variables
     use pme_routines
     use MKL_DFTI
@@ -209,10 +209,12 @@ contains
     Type(atom_data_type),intent(inout)                  :: atom_data
     Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
     Type(PME_data_type), intent(inout)                  :: PME_data
+    Type(file_io_data_type), intent(in)                 :: file_io_data
+    Type(integrator_data_type), intent(in)              :: integrator_data
 
-    integer:: i,length(3),status
+    integer:: i,length(3),status, pme_grid
     real*8 :: a(3), b(3), c(3), ka(3), kb(3), kc(3),kk(3,3)
-    real*8 :: x, exp_x2
+    real*8 :: x
 
 
     !************************************* initialize ewald/pme ************************************************!
@@ -240,7 +242,7 @@ contains
     status=DftiCommitDescriptor(PME_data%dfti_desc_inv)
 
     ! compute CB array 
-    a(:) = box(1,:);b(:) = box(2,:);c(:) = box(3,:)
+    a(:) = system_data%box(1,:); b(:) = system_data%box(2,:); c(:) = system_data%box(3,:)
     call crossproduct( a, b, kc ); kc = kc / system_data%volume 
     call crossproduct( b, c, ka ); ka = ka / system_data%volume
     call crossproduct( c, a, kb ); kb = kb / system_data%volume
@@ -303,7 +305,7 @@ contains
     !**************************** Get initial forces and energy *************************************!
     Select Case(ms_evb_simulation)
     Case("yes")
-       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
+       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data,integrator_data%n_output )
     Case("no")
        call calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     End Select
@@ -323,21 +325,19 @@ contains
     character(*),intent(in):: ifile_pmt
     integer,dimension(:,:),intent(out) :: gen_cross_terms
 
-    integer::i_type, j_type, i_param, n_cross, inputstatus,i_search,j_search,ind,ind1,ind2
-    character(MAX_ANAME):: atom1, atom2
+    integer::i_type, j_type, i_param, n_cross, inputstatus,ind,ind1,ind2
     integer,parameter :: max_param=20
     real*8,parameter :: small=1D-6
     character(20),dimension(max_param) :: args
     real*8,dimension(6) :: store
     integer        :: nargs
     character(300) :: input_string
-    character(25)::junk
     character(50)::line
 
 
     gen_cross_terms=0
 
-    ! store has dimension 6, since atype_lj_parameter has dimension 6 ( changed to accomodate C12).  Zero these components that will not be used
+    ! store has dimension 6, since atype_vdw_parameter has dimension 6 ( changed to accomodate C12).  Zero these components that will not be used
     store=0d0
 
     open(unit=file_h,file=ifile_pmt,status="old")
@@ -367,8 +367,8 @@ contains
 
        atype_name(i_type) = args(1)(1:MAX_ANAME)
        read(args(2),*) atype_chg(i_type)
-       read(args(3),*) atype_lj_parameter(i_type,i_type,1)     
-       read(args(4),*) atype_lj_parameter(i_type,i_type,2)
+       read(args(3),*) atype_vdw_parameter(i_type,i_type,1)     
+       read(args(4),*) atype_vdw_parameter(i_type,i_type,2)
        read(args(5),*) atype_freeze(i_type)
 
        ! warn if freezing atom type
@@ -403,15 +403,15 @@ contains
              Select Case(lj_comb_rule)
              Case("opls")
                 ! C12 goes first, this is read in as second parameter
-                atype_lj_parameter(ind1,ind2,1)=store(2)
-                atype_lj_parameter(ind1,ind2,2)=store(1)
-                atype_lj_parameter(ind2,ind1,1)=store(2)
-                atype_lj_parameter(ind2,ind1,2)=store(1)
+                atype_vdw_parameter(ind1,ind2,1)=store(2)
+                atype_vdw_parameter(ind1,ind2,2)=store(1)
+                atype_vdw_parameter(ind2,ind1,1)=store(2)
+                atype_vdw_parameter(ind2,ind1,2)=store(1)
              Case default
-                atype_lj_parameter(ind1,ind2,:)=store(:)
-                atype_lj_parameter(ind2,ind1,:)=store(:)
+                atype_vdw_parameter(ind1,ind2,:)=store(:)
+                atype_vdw_parameter(ind2,ind1,:)=store(:)
                 ! make sure we have corret combination rule selected, sigma and epsilon should be << 1000
-                if ( ( atype_lj_parameter(ind1,ind2,1) > 1000d0 ) .or. ( atype_lj_parameter(ind1,ind2,2) > 1000d0 ) ) then
+                if ( ( atype_vdw_parameter(ind1,ind2,1) > 1000d0 ) .or. ( atype_vdw_parameter(ind1,ind2,2) > 1000d0 ) ) then
                    write(*,*) "looks like combination rule should be opls.  Cross term parameters look "
                    write(*,*) "like C6 and C12 instead of epsilon and sigma based on their magnitudes  "
                    write(*,*) "please check consistency of cross terms and parameters "
@@ -464,8 +464,8 @@ contains
     use global_variables
     character(*), dimension(:),intent(in) :: aname
     integer, intent(in)              :: total_atoms
-    real*8, dimension(:),intent(out) :: charge
-    integer, dimension(:), intent(in) :: atom_type
+    real*8, dimension(:),intent(inout) :: charge
+    integer, dimension(:), intent(inout) :: atom_type_index
     integer,dimension(:,:),intent(in) :: gen_cross_terms
 
     integer:: i_param, j_param, i_atom,i_type,flag
@@ -476,7 +476,7 @@ contains
        Select Case( lj_comb_rule )
        Case("opls")
           do i_param=1,n_atom_type
-             call gen_C12_C6_epsilon_sigma(atype_lj_parameter,i_param,i_param)
+             call gen_C12_C6_epsilon_sigma(atype_vdw_parameter,i_param,i_param)
           enddo
        End Select
     End Select
@@ -487,10 +487,10 @@ contains
        do j_param=1,n_atom_type
           if (gen_cross_terms(i_param,j_param) .eq. 0) then
              ! if these cross terms weren't given in input file
-             call combination_rule_cross_terms(atype_lj_parameter,i_param,j_param,lj_bkghm,lj_comb_rule)
+             call combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_bkghm,lj_comb_rule)
           else
              ! use given terms
-             atype_lj_parameter(i_param,j_param,:) = atype_lj_parameter(i_param,j_param,:)
+             atype_vdw_parameter(i_param,j_param,:) = atype_vdw_parameter(i_param,j_param,:)
           endif
        enddo
     enddo
@@ -502,7 +502,7 @@ contains
        Case("standard")
           do i_param=1,n_atom_type
              do j_param=1,n_atom_type
-                call gen_C12_C6_epsilon_sigma(atype_lj_parameter,i_param,j_param)
+                call gen_C12_C6_epsilon_sigma(atype_vdw_parameter,i_param,j_param)
              enddo
           enddo
        End Select
@@ -540,8 +540,8 @@ contains
   ! Lorentz-Berthelot combination rules operate on sigma and epsilon,
   ! Opls combination rules operate on C6, C12
   !***************************************************
-  subroutine combination_rule_cross_terms(atype_lj_parameter,i_param,j_param,lj_bkghm,lj_comb_rule,exp_only)
-    real*8, dimension(:,:,:), intent(inout) :: atype_lj_parameter
+  subroutine combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_bkghm,lj_comb_rule,exp_only)
+    real*8, dimension(:,:,:), intent(inout) :: atype_vdw_parameter
     integer, intent(in) :: i_param,j_param
     integer, intent(in) :: lj_bkghm
     character(*), intent(in) :: lj_comb_rule
@@ -564,20 +564,20 @@ contains
        Select Case(lj_comb_rule)
        Case("standard")
           ! all geometric combination rules
-          atype_lj_parameter(i_param,j_param,1) = sqrt(atype_lj_parameter(i_param,i_param,1)*atype_lj_parameter(j_param,j_param,1))    ! A coefficient
-          atype_lj_parameter(i_param,j_param,2) = sqrt(atype_lj_parameter(i_param,i_param,2)*atype_lj_parameter(j_param,j_param,2))    ! B parameter
-          atype_lj_parameter(i_param,j_param,3) = sqrt(atype_lj_parameter(i_param,i_param,3)*atype_lj_parameter(j_param,j_param,3))    ! C parameter
+          atype_vdw_parameter(i_param,j_param,1) = sqrt(atype_vdw_parameter(i_param,i_param,1)*atype_vdw_parameter(j_param,j_param,1))    ! A coefficient
+          atype_vdw_parameter(i_param,j_param,2) = sqrt(atype_vdw_parameter(i_param,i_param,2)*atype_vdw_parameter(j_param,j_param,2))    ! B parameter
+          atype_vdw_parameter(i_param,j_param,3) = sqrt(atype_vdw_parameter(i_param,i_param,3)*atype_vdw_parameter(j_param,j_param,3))    ! C parameter
        Case("ZIFFF")
           ! only do prefactors if exp_only input isn't present
           if ( flag_exponent .eq. 0 ) then
-             atype_lj_parameter(i_param,j_param,1) = sqrt(atype_lj_parameter(i_param,i_param,1)*atype_lj_parameter(j_param,j_param,1))    ! A coefficient 
+             atype_vdw_parameter(i_param,j_param,1) = sqrt(atype_vdw_parameter(i_param,i_param,1)*atype_vdw_parameter(j_param,j_param,1))    ! A coefficient 
           endif
           ! exponent combination rules given by ZIF FF rules
           ! B exponent
-          e1 = atype_lj_parameter(i_param,i_param,2)
-          e2 = atype_lj_parameter(j_param,j_param,2)
-          atype_lj_parameter(i_param,j_param,2) = (e1+e2) * (e1*e2)/(e1**2+e2**2) 
-          atype_lj_parameter(i_param,j_param,3) = sqrt(atype_lj_parameter(i_param,i_param,3)*atype_lj_parameter(j_param,j_param,3))    ! C coefficient
+          e1 = atype_vdw_parameter(i_param,i_param,2)
+          e2 = atype_vdw_parameter(j_param,j_param,2)
+          atype_vdw_parameter(i_param,j_param,2) = (e1+e2) * (e1*e2)/(e1**2+e2**2) 
+          atype_vdw_parameter(i_param,j_param,3) = sqrt(atype_vdw_parameter(i_param,i_param,3)*atype_vdw_parameter(j_param,j_param,3))    ! C coefficient
        Case default
           stop "lj_comb_rule parameter isn't recognized for buckingham type force field.  Please use either 'standard' for geometric combination rules, or 'ZIFFF' for ZIF FF combination rules"
        End Select
@@ -586,12 +586,12 @@ contains
        Select Case(lj_comb_rule)
        Case("standard")
           ! Lorentz_Berthelot combination rules
-          atype_lj_parameter(i_param,j_param,1) = sqrt(atype_lj_parameter(i_param,i_param,1)*atype_lj_parameter(j_param,j_param,1))    ! epsilon
-          atype_lj_parameter(i_param,j_param,2) = (atype_lj_parameter(i_param,i_param,2) + atype_lj_parameter(j_param,j_param,2))/dble(2)   ! sigma
+          atype_vdw_parameter(i_param,j_param,1) = sqrt(atype_vdw_parameter(i_param,i_param,1)*atype_vdw_parameter(j_param,j_param,1))    ! epsilon
+          atype_vdw_parameter(i_param,j_param,2) = (atype_vdw_parameter(i_param,i_param,2) + atype_vdw_parameter(j_param,j_param,2))/dble(2)   ! sigma
        Case("opls")
           ! opls combination rules
-          atype_lj_parameter(i_param,j_param,1) = sqrt(atype_lj_parameter(i_param,i_param,1)*atype_lj_parameter(j_param,j_param,1))   ! C12        
-          atype_lj_parameter(i_param,j_param,2) = sqrt(atype_lj_parameter(i_param,i_param,2)*atype_lj_parameter(j_param,j_param,2))   ! C6
+          atype_vdw_parameter(i_param,j_param,1) = sqrt(atype_vdw_parameter(i_param,i_param,1)*atype_vdw_parameter(j_param,j_param,1))   ! C12        
+          atype_vdw_parameter(i_param,j_param,2) = sqrt(atype_vdw_parameter(i_param,i_param,2)*atype_vdw_parameter(j_param,j_param,2))   ! C6
        Case default
           stop "lj_comb_rule parameter isn't recognized for lennard jones force field.  Please use either 'standard' for Lorentz-Berthelot combination rules or 'opls' for opls combination rules."
        End Select
@@ -605,19 +605,19 @@ contains
   ! this subroutine creates C12 and C6 coefficients from epsilon and sigma
   ! parameters for a lennard jones force field
   !**************************************************
-  subroutine gen_C12_C6_epsilon_sigma(atype_lj_parameter,i_param,j_param)
-    real*8, dimension(:,:,:), intent(inout) :: atype_lj_parameter
+  subroutine gen_C12_C6_epsilon_sigma(atype_vdw_parameter,i_param,j_param)
+    real*8, dimension(:,:,:), intent(inout) :: atype_vdw_parameter
     integer, intent(in)  :: i_param,j_param
 
     real*8 :: epsilon, sigma
 
-    epsilon = atype_lj_parameter(i_param,j_param,1)
-    sigma   = atype_lj_parameter(i_param,j_param,2)
+    epsilon = atype_vdw_parameter(i_param,j_param,1)
+    sigma   = atype_vdw_parameter(i_param,j_param,2)
 
     ! C12
-    atype_lj_parameter(i_param,j_param,1) = 4d0*epsilon*sigma**12
+    atype_vdw_parameter(i_param,j_param,1) = 4d0*epsilon*sigma**12
     ! C6
-    atype_lj_parameter(i_param,j_param,2) = 4d0*epsilon*sigma**6
+    atype_vdw_parameter(i_param,j_param,2) = 4d0*epsilon*sigma**6
 
   end subroutine gen_C12_C6_epsilon_sigma
 
@@ -640,7 +640,7 @@ contains
     real*8 :: C6, C12
 
     ! by default, use the standard lj parameters
-    atype_lj_parameter_14 = atype_lj_parameter
+    atype_vdw_parameter_14 = atype_vdw_parameter
 
     open(unit=file_h,file=ifile_pmt,status="old")
 
@@ -665,10 +665,10 @@ contains
           write(*,*) "explicit C6, C12 parameters read in for 1-4 interaction between"
           write(*,*) "atoms ", atomtype1, " and ", atomtype2
 
-          atype_lj_parameter_14( index1, index2 , 1 ) = C12
-          atype_lj_parameter_14( index2, index1 , 1 ) = C12
-          atype_lj_parameter_14( index1, index2 , 2 ) = C6
-          atype_lj_parameter_14( index2, index1 , 2 ) = C6
+          atype_vdw_parameter_14( index1, index2 , 1 ) = C12
+          atype_vdw_parameter_14( index2, index1 , 1 ) = C12
+          atype_vdw_parameter_14( index1, index2 , 2 ) = C6
+          atype_vdw_parameter_14( index2, index1 , 2 ) = C6
        end do
 
     end if
@@ -687,8 +687,8 @@ contains
   subroutine gen_molecule_type_data( n_mole, molecule_data, atom_data )
     use global_variables
     integer, intent(in) :: n_mole
-    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
-    type(atom_data_type) , dimension(:), intent(in)    :: atom_data
+    type(molecule_data_type), dimension(:), intent(inout) :: molecule_data
+    type(atom_data_type),  intent(in)    :: atom_data
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -731,7 +731,7 @@ contains
              count = i_atom
           enddo
           if( molecule_data(i_mole)%n_atom .eq. count) then
-             do i_atom=1, n_atom(i_mole)
+             do i_atom=1, molecule_data(i_mole)%n_atom
                 if ( single_molecule_data%atom_type_index(i_atom) .ne. molecule_type(j_mole,i_atom)) then
                    goto 100
                 endif
@@ -800,7 +800,7 @@ contains
     use global_variables
     integer, intent(in) :: total_atoms
     real*8,dimension(:),intent(out) :: mass
-    integer, intent(in) :: atom_type_index
+    integer, dimension(:),intent(in) :: atom_type_index
 
     integer :: i_atom, i_type
     real*8  :: mass_atom

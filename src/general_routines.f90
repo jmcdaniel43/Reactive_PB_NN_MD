@@ -23,7 +23,7 @@ contains
     call getarg( 4, file_io_data%ifile_simpmt )
     call getarg( 5, file_io_data%ofile_traj )
     call getarg( 6, file_io_data%ofile_log )
-    call getarg( 7, file_io_data%ofile_hop_local )
+    call getarg( 7, file_io_data%ofile_hop )
 
   end subroutine sort_input_files
 
@@ -99,7 +99,7 @@ contains
 
        ! for the log file, go to end of file, to prepare to append output
        ! leave this file open
-       open( log_file, file=ifile_io_data%ofile_log, status='old' )  
+       open( log_file, file=file_io_data%ofile_log, status='old' )  
        do 
           ! read garbage
           call read_file_find_heading( log_file, 'asdfdasdfasdfasdf' , flag, flag_eof )
@@ -168,7 +168,6 @@ contains
     integer :: flag, flag_eof, i_step_traj, i_atom, i_mole_local, i_atom_local
     character(5) :: mname
     character(5) :: aname
-    character(400) :: line
     character(10) :: junk
 
        open( vel_file, file=velocity_file, status='old' )
@@ -198,14 +197,17 @@ contains
   ! this subroutine figures out the number of molecules in gro file to allocate
   ! molecule arrays
   !***********************************************************************
-  subroutine read_gro_number_molecules( file_handle, gro_file, n_mole )
+  subroutine read_gro_number_molecules( file_handle, grofile, n_mole )
    integer, intent(in) :: file_handle
-   character(*), intent(in) :: gro_file
+   character(*), intent(in) :: grofile
    integer, intent(out)     :: n_mole
 
    integer :: total_atoms, i, i_mole
    character(5) :: mname, aname
+   character(100) :: line
    real*8  :: r_tmp(3), junk
+
+   open( file_handle, file=grofile, status='old' )
 
    read( file_handle, * ) line
    read( file_handle, '(I)' ) total_atoms 
@@ -231,12 +233,13 @@ contains
   ! this will allocate aname, xyz arrays, and attach pointers from atom_data structure
   !***********************************************************************
   subroutine read_gro( file_handle, system_data, molecule_data, atom_data, aname, xyz )
+   use global_variables
    integer, intent(in) :: file_handle
    type(system_data_type), intent(inout) :: system_data
    type(molecule_data_type), dimension(:), intent(inout) :: molecule_data
    type(atom_data_type) , intent(inout)  :: atom_data
-   character(*), dimension(:), intent(in):: aname
-   real*8, dimension(:,:), intent(in) :: xyz
+   character(*), dimension(:), allocatable, target, intent(inout):: aname
+   real*8, dimension(:,:), allocatable, target, intent(inout) :: xyz
 
    integer :: total_atoms
    integer :: i,j, i_mole, i_atom, i_mole_prev, i_start, junk, nargs, inputstatus
@@ -530,9 +533,9 @@ contains
   ! reciprocal lattice vectors
   !********************************************
   subroutine create_scaled_direct_coordinates(xyz_scale, xyz, n_atom, kk, K)
-    real*8,dimension(:,:),intent(out) :: xyz_scale
+    real*8,dimension(:,:),intent(out):: xyz_scale
     real*8,dimension(:,:),intent(in) :: xyz
-    integer, dimension(:),intent(in) :: n_atom
+    integer, intent(in)              :: n_atom
     real*8,dimension(:,:),intent(in) :: kk
     integer, intent(in) :: K
 
@@ -543,14 +546,14 @@ contains
        do l=1,3
           xyz_scale(l,i_atom)=dble(K)*dot_product(kk(l,:),xyz(:,i_atom))
           ! if atoms are out of grid, shift them back in
-          if (xyz_scale(j,i_atom)<0d0) then
-             xyz_scale(j,i_atom)=xyz_scale(j,i_atom)+dble(K)
-          else if(xyz_scale(j,i_atom)>= dble(K)) then
-             xyz_scale(j,i_atom)=xyz_scale(j,i_atom)-dble(K)
+          if (xyz_scale(l,i_atom)<0d0) then
+             xyz_scale(l,i_atom)=xyz_scale(l,i_atom)+dble(K)
+          else if(xyz_scale(l,i_atom)>= dble(K)) then
+             xyz_scale(l,i_atom)=xyz_scale(l,i_atom)-dble(K)
           endif
           ! make sure scaled coordinates are not numerically equal to zero, otherwise this will screw up Q grid routine
-          if ( abs(xyz_scale(j,i_atom)) < small ) then
-             xyz_scale(j,i_atom) = small
+          if ( abs(xyz_scale(l,i_atom)) < small ) then
+             xyz_scale(l,i_atom) = small
           end if
        enddo
     enddo
@@ -607,50 +610,6 @@ contains
     pbc_dr(:) = rj(:) - ri(:) - shift(:)
   end function pbc_dr
 
-
-
-
-  !**************************************************************************
-  ! this function searches the B spline grids, and interpolates B_spline of a
-  ! real number from the grids, the accuracy gained from using this subroutine is 
-  ! probably not worth the extra time, but this subroutine is mainly for
-  ! use when calculating forces numerically using pme energy routine
-  !**************************************************************************
-  function interp_B_spline(x,n)
-    use global_variables
-    real*8::interp_B_spline
-    real*8,intent(in)::x
-    integer,intent(in)::n
-    real*8::grid_val
-    integer::n_int
-
-
-    n_int=floor(x*dble(spline_grid)/dble(n))
-    grid_val=x*dble(spline_grid)/dble(n)
-    if(n_int.eq.0) then
-       if(n .eq. 6 ) then
-          interp_B_spline= (grid_val-dble(n_int))* B6_spline(n_int+1)
-       elseif(n .eq. 5) then
-          interp_B_spline= (grid_val-dble(n_int))* B5_spline(n_int+1)
-       elseif(n .eq. 4) then
-          interp_B_spline= (grid_val-dble(n_int))* B4_spline(n_int+1)
-       elseif(n .eq. 3) then
-          interp_B_spline= (grid_val-dble(n_int))* B3_spline(n_int+1)
-       endif
-    else
-       if(n .eq. 6 ) then
-          interp_B_spline= (1. -(grid_val-dble(n_int)))*B6_spline(n_int) + (grid_val-dble(n_int))* B6_spline(n_int+1)
-       elseif(n.eq.5) then
-          interp_B_spline= (1. -(grid_val-dble(n_int)))*B5_spline(n_int) + (grid_val-dble(n_int))* B5_spline(n_int+1)
-       elseif(n.eq.4) then
-          interp_B_spline= (1. -(grid_val-dble(n_int)))*B4_spline(n_int) + (grid_val-dble(n_int))* B4_spline(n_int+1)
-       elseif(n.eq.3) then
-          interp_B_spline= (1. -(grid_val-dble(n_int)))*B3_spline(n_int) + (grid_val-dble(n_int))* B3_spline(n_int+1)
-       endif
-    endif
-
-
-  end function interp_B_spline
 
 
 
@@ -742,13 +701,13 @@ contains
     integer, dimension(:), intent(in)            :: atom_index
     !**** these are input atomic data structures for which we set pointers:  Not
     ! all of these may be needed, so not all of them will be input
-    real*8, dimension(:,:), intent(in), optional :: atom_xyz
-    real*8, dimension(:,:), intent(in), optional :: atom_velocity
-    real*8, dimension(:,:), intent(in), optional :: atom_force
-    real*8, dimension(:), intent(in), optional :: atom_mass
-    real*8, dimension(:), intent(in), optional :: atom_charge
-    integer, dimension(:), intent(in), optional :: atom_type_index
-    character(*), dimension(:), intent(in), optional :: atom_name
+    real*8, dimension(:,:), intent(in),target, optional :: atom_xyz
+    real*8, dimension(:,:), intent(in),target, optional :: atom_velocity
+    real*8, dimension(:,:), intent(in),target, optional :: atom_force
+    real*8, dimension(:), intent(in),target, optional :: atom_mass
+    real*8, dimension(:), intent(in),target, optional :: atom_charge
+    integer, dimension(:), intent(in),target, optional :: atom_type_index
+    character(*), dimension(:), intent(in),target, optional :: atom_name
 
     integer :: low_index, high_index
 
@@ -964,8 +923,8 @@ contains
     real*8  :: xyz(3), box(3,3)
     integer :: i_mole, i_atom, i_count
 
-    write( file_h, *) "step ", i_step, "time(ps)", time_step
-    write( file_h, *) system_data%total_atoms
+    write( grofile_h, *) "step ", i_step, "time(ps)", time_step
+    write( grofile_h, *) system_data%total_atoms
     
     i_count=1
     do i_mole =1 , system_data%n_mole
@@ -1008,8 +967,8 @@ contains
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
     type(single_molecule_data_type) :: single_molecule_data
 
-    real*8, time_step
-    integer :: i_mole, i_atom, m_index, a_index
+    real*8  :: time_step
+    integer :: i_mole, i_atom
  
     time_step = dble(i_step) * delta_t
 
@@ -1036,9 +995,9 @@ contains
   subroutine fix_intra_molecular_shifts( n_mole, molecule_data , atom_data, box, xyz_to_box_transform  )
     use global_variables
     integer, intent(in) :: n_mole
-    type(molecule_data_type), intent(in) :: molecule_data
+    type(molecule_data_type),dimension(:), intent(in) :: molecule_data
     type(atom_data_type), intent(inout)  :: atom_data
-    real*8, dimension(:,:), intent(in) box, xyz_to_box_transform
+    real*8, dimension(:,:), intent(in)   :: box, xyz_to_box_transform
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -1136,7 +1095,7 @@ contains
 
        if ( verlet_cutoff .le. real_space_cutoff ) then
           stop "verlet_cutoff must be set greater than real_space_cutoff "
-       elseif ( ( verlet_cutoff_lj - real_space_cutoff ) .lt. warn_verlet ) then
+       elseif ( ( verlet_cutoff - real_space_cutoff ) .lt. warn_verlet ) then
           write(*,*) ""
           write(*,*) "WARNING:  verlet_cutoff is less than ", warn_verlet
           write(*,*) "Angstrom larger than real_space_cutoff.  Are you sure you want"
@@ -1156,9 +1115,9 @@ contains
  subroutine shift_molecules_into_box( n_mole, molecule_data , atom_data, box, xyz_to_box_transform  )
     use global_variables
     integer, intent(in) :: n_mole
-    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type(molecule_data_type), dimension(:), intent(inout) :: molecule_data
     type(atom_data_type), intent(inout)  :: atom_data
-    real*8, dimension(:,:), intent(in) box, xyz_to_box_transform
+    real*8, dimension(:,:), intent(in)   :: box, xyz_to_box_transform
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -1166,7 +1125,6 @@ contains
 
     real*8,dimension(3) :: dr_box,shift,temp_xyz
     integer:: i_mole, i_atom, i, j
-    real*8::dist
 
     ! loop over molecules
     do i_mole = 1 , n_mole
@@ -1247,15 +1205,16 @@ contains
     allocate( verlet_point(total_atoms+1) )
 
     pi = constants%pi
-    size_verlet = 4d0 * pi * verlet_list_data%verlet_cutoff**3 * dble(total_atoms)**2 / 6d0 / volume
+    ! note size_verlet is integer, this will evaluate to integer...
+    size_verlet = floor(4d0 * pi * verlet_list_data%verlet_cutoff**3 * dble(total_atoms)**2 / 6d0 / volume)
 
     ! for huge box, value of temp could be zero if we just have gas phase dimer
     ! verlet list should be at least as big as number of molecules
-    size_verlet = max( total_atoms , floor( size_verlet ) )
+    size_verlet = max( total_atoms , size_verlet )
 
     ! safe_verlet is factor that we multiply theoretically needed size of verlet list to be safe
     ! found in global_variables
-    size_verlet = floor( dble(size_verlet) * safe_verlet )
+    size_verlet = floor( dble(size_verlet) *  verlet_list_data%safe_verlet )
 
     allocate( neighbor_list(size_verlet) )
 
@@ -1347,8 +1306,6 @@ contains
              flag_verlet_list = 0
           endif
 
-       end if
-
     end if
 
     !****************************timing**************************************!
@@ -1377,20 +1334,21 @@ contains
   ! note that this means we need to set the value of verlet_point(last_atom+1), so that we know the finish position for
   ! neighbors of last_atom
   !*********************************************
-  subroutine construct_verlet_list(verlet_list_data, atom_data, total_atoms, box, xyz_to_box_transform) 
+  subroutine construct_verlet_list(verlet_list_data, atom_data, molecule_data, total_atoms, box, xyz_to_box_transform) 
     use global_variables
-    type(verlet_list_data_type) :: verlet_list_data
-    type(atom_data_type)        :: atom_data
+    type(verlet_list_data_type), intent(inout) :: verlet_list_data
+    type(atom_data_type), intent(in)           :: atom_data
+    type(molecule_data_type),dimension(:), intent(in) :: molecule_data
     integer,intent(in)          :: total_atoms
     real*8,dimension(:,:),intent(in) :: box, xyz_to_box_transform
 
-    integer :: ix, iy, iz, nx, ny, nz,i_end_atom, i_atom_head
+    integer :: ix, iy, iz, nx, ny, nz,i_end_atom
     integer :: dia, dib, dic, igrid1, igrid2, igrid3, ia, ib, ic
     real*8, dimension(3) :: rtmp
 
     real*8 :: rka, rkb, rkc
-    integer :: i,i_mole, j_mole, i_atom, j_atom, k_atom, verlet_index, a_index, last_atom, verlet_neighbor_list_size
-    real*8,dimension(3) :: r_ij, shift, norm_dr, dr_direct, shift_direct
+    integer :: i,i_mole, j_mole, n_mole, i_atom, j_atom, k_atom, verlet_index, a_index, last_atom, verlet_neighbor_list_size
+    real*8,dimension(3) :: r_ij, shift
     real*8 :: verlet_cutoff2
     real*8,parameter :: small = 1d-6
     ! this is a neighbor list local to each grid cell
@@ -1411,8 +1369,9 @@ contains
     endif
     !***********************************************************************!
 
+    n_mole = size(molecule_data)
 
-    nx = na_nslist ; ny = nb_nslist ; nz = nc_nslist ;
+    nx = verlet_list_data%na_nslist ; ny = verlet_list_data%nb_nslist ; nz = verlet_list_data%nc_nslist ;
     ! hash won't work if these are not 2 digit
     if ( ( nx < 10 ) .or. ( ny < 10 ) .or. ( nz < 10  ) .or.  ( nx > 99 ) .or. ( ny > 99 ) .or. ( nz > 99  )) then
        stop " na_nslist, nb_nslist, nc_nslist must be between 10 and 100 "
@@ -1423,7 +1382,7 @@ contains
     verlet_index = 1
 
    ! first construct the cell-based neighbor list
-   allocate( nslist_cell(total_atoms), cell_index_hash(total_atoms) , index_molecule(total_atoms), headlist_cell(na_nslist,nb_nslist,nc_nslist), endlist_cell(na_nslist,nb_nslist,nc_nslist)  )
+   allocate( nslist_cell(total_atoms), cell_index_hash(total_atoms) , index_molecule(total_atoms), headlist_cell(nx,ny,nz), endlist_cell(nx,ny,nz)  )
 
     !   pointers all set to null
     headlist_cell = 0
@@ -1431,7 +1390,7 @@ contains
     nslist_cell = 0
 
 
-    do i_mole=1, tot_n_mole
+    do i_mole=1, n_mole
        do i_atom=1, molecule_data(i_mole)%n_atom
 
              a_index = molecule_data(i_mole)%atom_index(i_atom)
@@ -1458,7 +1417,6 @@ contains
                 nslist_cell(i_end_atom) = a_index
                 endlist_cell(ix,iy,iz) = a_index
              endif
-          end if
        enddo
     enddo
 
@@ -1546,7 +1504,6 @@ contains
                    enddo
                 enddo
              enddo
-          end if
        enddo
     enddo
 
@@ -1748,8 +1705,8 @@ contains
     real*8 :: lambda
     integer :: index
 
-    ! buckingham exponent is the second parameter in atype_lj_parameter array, use this for screening
-    lambda = atype_lj_parameter(atom_id1,atom_id2,2) * norm_dr
+    ! buckingham exponent is the second parameter in atype_vdw_parameter array, use this for screening
+    lambda = atype_vdw_parameter(atom_id1,atom_id2,2) * norm_dr
 
     ! decide whether we are using a table lookup for these interactions
     Select Case(grid_Tang_Toennies)
@@ -1841,8 +1798,8 @@ contains
 
 
 
-    ! buckingham exponent is the second parameter in atype_lj_parameter array, use this for screening
-    exponent = atype_lj_parameter(atom_id1,atom_id2,2)
+    ! buckingham exponent is the second parameter in atype_vdw_parameter array, use this for screening
+    exponent = atype_vdw_parameter(atom_id1,atom_id2,2)
     lambda = exponent * norm_dr
 
 

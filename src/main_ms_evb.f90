@@ -31,24 +31,24 @@ program main_ms_evb
   Type(PME_data_type)                                  :: PME_data
  
   !**************************************** target variables for atom_data_type pointers
-   real*8, dimension(:,:), allocatable :: xyz
-   real*8, dimension(:,:), allocatable :: velocity
-   real*8, dimension(:,:), allocatable :: force
-   real*8, dimension(:), allocatable   :: mass
-   real*8, dimension(:), allocatable   :: charge
-   integer, dimension(:), allocatable  :: atom_type_index
-   character(MAX_ANAME)(:),allocatable :: aname
+   real*8, dimension(:,:), allocatable, target :: xyz
+   real*8, dimension(:,:), allocatable, target :: velocity
+   real*8, dimension(:,:), allocatable, target :: force
+   real*8, dimension(:), allocatable, target   :: mass
+   real*8, dimension(:), allocatable, target   :: charge
+   integer, dimension(:), allocatable, target  :: atom_type_index
+   character(MAX_ANAME),dimension(:),allocatable, target :: aname
 
 
   !***** Local variables
-  integer :: i_step, trajectory_step
+  integer :: i_step
  
 
   call sort_input_files( file_io_data )
   call check_restart_trajectory( file_io_data )
 
   call read_simulation_parameters( file_io_data%ifile_simpmt_file_h, file_io_data%ifile_simpmt, system_data, integrator_data, verlet_list_data, PME_data )
-  call initialize_simulation( system_data, molecule_data, atom_data, integrator_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
+  call initialize_simulation( system_data, molecule_data, atom_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
 
 
   !*** open output files if this is not a continuation run.  If this is a continuation, these files will
@@ -65,7 +65,7 @@ program main_ms_evb
   end Select
 
   ! assume orthorhombic box
-  if ( ( abs(box(1,2)) > 10D-6 ) .or. ( abs(box(1,3)) > 10D-6 ) .or. ( abs(box(2,1)) > 10D-6 ) .or.  ( abs(box(2,3)) > 10D-6 ) .or. ( abs(box(3,1)) > 10D-6 ) .or. ( abs(box(3,2)) > 10D-6 ) ) then
+  if ( ( abs(system_data%box(1,2)) > 10D-6 ) .or. ( abs(system_data%box(1,3)) > 10D-6 ) .or. ( abs(system_data%box(2,1)) > 10D-6 ) .or.  ( abs(system_data%box(2,3)) > 10D-6 ) .or. ( abs(system_data%box(3,1)) > 10D-6 ) .or. ( abs(system_data%box(3,2)) > 10D-6 ) ) then
      write(*,*)  ""
      write(*,*)  "code has been modified to assume orthorhombic box"
      write(*,*)  "to change this, fix commented sections in energy calculation subroutines"
@@ -76,13 +76,13 @@ program main_ms_evb
 
   !**********
   ! verlet list size
-  write(*,*) " verlet list size parameter verlet_safe is set to ", safe_verlet
+  write(*,*) " verlet list size parameter verlet_safe is set to ", verlet_list_data%safe_verlet
   write(*,*) " too big a value could slow simulation down "
   write(*,*) ""
   !************
 
 
-  call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
+  call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data )
 
 
   Select Case( restart_trajectory )
@@ -102,6 +102,7 @@ program main_ms_evb
 
 
   do i_step = 1, integrator_data%n_step
+     ! this is global variable which may be used for printing in ms-evb
      trajectory_step = n_old_trajectory + i_step
 
      call  mc_sample( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )

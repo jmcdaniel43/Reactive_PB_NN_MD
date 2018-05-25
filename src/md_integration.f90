@@ -26,7 +26,7 @@ contains
     type(file_io_data_type) , intent(in)         :: file_io_data
 
 
-    Select Case (select_ensemble)
+    Select Case (integrator_data%ensemble)
     Case("NVE")
        !*********************** this is nve md ******************************!
        call md_integrate_atomic( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
@@ -48,7 +48,7 @@ contains
   !*************************************************************************
   subroutine sample_atomic_velocities(n_mole, n_atom, temperature, molecule_data, atom_data )
     use global_variables
-    integer,dimension,intent(in) :: n_mole,n_atom
+    integer, intent(in)          :: n_mole,n_atom
     real*8,   intent(in)         :: temperature
     type(molecule_data_type), dimension(:),intent(in) :: molecule_data
     type(atom_data_type) , intent(inout)   :: atom_data
@@ -60,7 +60,7 @@ contains
     integer :: i_atom, i_type, n_tot
     real*8,dimension(2)  :: vel
     real*8,parameter :: small=1D-3
-    real*8,parameter:: conv_fac, kB
+    real*8           :: conv_fac, kB
     real*8 :: sum_KE, norm
 
     conv_fac = constants%conv_kJmol_ang2ps2gmol   ! converts kJ/mol to A^2/ps^2*g/mol
@@ -81,7 +81,7 @@ contains
           ! make sure mass is non-zero
           if ( mass(i_atom) < small ) then
              write(*,*) "trying to assign velocity for atom ", i_atom
-             write(*,*) "of molecule ", i_mole, " but mass is zero!"
+             write(*,*) "but mass is zero!"
              stop
           end if
 
@@ -111,7 +111,7 @@ contains
           end if
        enddo
 
-    norm = 1.5d0 * kB * temp * dble(n_tot) / sum_KE
+    norm = 1.5d0 * kB * temperature * dble(n_tot) / sum_KE
     atom_data%velocity = atom_data%velocity * sqrt(norm)
 
     deallocate(mass, atom_type_index )
@@ -280,7 +280,7 @@ contains
 
 
     ! finally remove center of mass momentum.  This should be numerical noise, so shouldn't effect energy conservation
-    call subtract_center_of_mass_momentum(n_mole, molecule_data, atom_data )
+    call subtract_center_of_mass_momentum(system_data%n_mole, molecule_data, atom_data )
 
     !****************************timing**************************************!
     if(debug .eq. 1) then

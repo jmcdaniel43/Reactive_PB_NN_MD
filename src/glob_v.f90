@@ -33,13 +33,18 @@ implicit none
   ! force field parameter arrays
   integer, parameter ::  MAX_N_MOLE_TYPE=10, MAX_N_ATOM_TYPE=20
 
+  ! this is maximum number of atoms per molecule, which is used to set size of
+  ! bond, angle, dihedral list arrays.  Probably we should get rid of this
+  ! parameter and allocate necessary size at runtime...
+  integer, parameter :: MAX_N_ATOM=30
+
   integer, parameter :: MAX_FN=100, MAX_ANAME=5, MAX_MNAME=5
 
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
   character(3)  :: grid_Tang_Toennies ! grid damping functions
 
-  character(3)  :: ms_evb_simulation="yes"   ! ms_evb
-  character(3)  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
+  character(3), parameter  :: ms_evb_simulation="yes"   ! ms_evb
+  character(3), parameter  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
 
 !***********************************************************************************************
 
@@ -146,7 +151,7 @@ implicit none
    real*8, dimension(:), pointer   :: mass
    real*8, dimension(:), pointer   :: charge
    integer, dimension(:), pointer  :: atom_type_index  ! this is index of atom_type to look up force field parameters for this atom
-   character(MAX_ANAME)(:), pointer :: aname
+   character(MAX_ANAME),dimension(:), pointer :: aname
   end type atom_data_type
 
  !************************* defined type to store all molecule information
@@ -174,39 +179,41 @@ implicit none
    real*8, dimension(:), pointer   :: mass
    real*8, dimension(:), pointer   :: charge
    integer, dimension(:), pointer  :: atom_type_index  ! this is index of atom_type to look up force field parameters for this atom
-   character(MAX_ANAME)(:), pointer :: aname
+   character(MAX_ANAME),dimension(:), pointer :: aname
  end type single_molecule_data_type
 
 
   
  !************************* defined type to store all i/o file information
  type file_io_data_type
-  character(MAX_FN) :: ifile_gro,
+  character(MAX_FN) :: ifile_gro
   character(MAX_FN) :: ifile_ffpmt
   character(MAX_FN) :: ifile_top
   character(MAX_FN) :: ifile_simpmt
-  character(MAX_FN) :: ifile_velocity = "velocity_checkpoint"  ! use this if restarting a simulation
+  character(MAX_FN) :: ifile_velocity ! use this if restarting a simulation
   character(MAX_FN) :: ofile_traj
   character(MAX_FN) :: ofile_log
   character(MAX_FN) :: ofile_hop
-  integer, parameter :: ifile_gro_file_h=90   ! these are the file handles
-  integer, parameter :: ifile_ffpmt_file_h=91 
-  integer, parameter :: ifile_top_file_h=92 
-  integer, parameter :: ifile_simpmt_file_h=93 
-  integer, parameter :: ifile_velocity_file_h=94
-  integer, parameter :: ofile_traj_file_h=95 
-  integer, parameter :: ofile_log_file_h=96 
-  integer, parameter :: ofile_hop_file_h=97 
+  integer           :: ifile_gro_file_h  ! these are the file handles
+  integer           :: ifile_ffpmt_file_h 
+  integer           :: ifile_top_file_h 
+  integer           :: ifile_simpmt_file_h 
+  integer           :: ifile_velocity_file_h
+  integer           :: ofile_traj_file_h 
+  integer           :: ofile_log_file_h 
+  integer           :: ofile_hop_file_h 
  end type file_io_data_type
 
 
  !********************* defined type to store constants
+ ! the values of these constants will be initialized in the
+ ! initialize_constants subroutine within this module
  type constants_data_type
-  real*8, parameter :: pi=3.141592654d0
-  real*8, parameter :: pi_sqrt=1.772453851d0
-  real*8, parameter :: conv_kJmol_ang2ps2gmol = 100d0  ! converts kJ/mol to A^2/ps^2*g/mol
-  real*8, parameter :: conv_e2A_kJmol = 1389.35465     ! converts e^2/A to kJ/mol
-  real*8, parameter :: boltzmann = 0.008314462d0       ! kB, kJ/mol/K
+  real*8      :: pi
+  real*8      :: pi_sqrt
+  real*8      :: conv_kJmol_ang2ps2gmol       ! converts kJ/mol to A^2/ps^2*g/mol
+  real*8      :: conv_e2A_kJmol               ! converts e^2/A to kJ/mol
+  real*8      :: boltzmann                    ! kB, kJ/mol/K
  end type constants_data_type
 
  Type(constants_data_type) :: constants
@@ -220,8 +227,8 @@ implicit none
   integer,dimension(:), pointer             :: verlet_point
   integer                                   :: verlet_atoms  ! number of atoms in verlet list
   real*8                                    :: verlet_cutoff
-  real*8,parameter                          :: safe_verlet= 1.2 ! need bigger for long lamallae 1.6  !
-  real*8,parameter                          :: verlet_thresh =2d0  ! see subroutine update_verlet_displacements for use of this variable
+  real*8                                    :: safe_verlet 
+  real*8                                    :: verlet_thresh  ! see subroutine update_verlet_displacements for use of this variable
   integer                                   :: na_nslist      ! grid dimensions for neighbor searching
   integer                                   :: nb_nslist
   integer                                   :: nc_nslist  
@@ -251,9 +258,9 @@ implicit none
   real*8,dimension(:,:) , pointer      ::  force_recip
   TYPE(DFTI_DESCRIPTOR), POINTER       ::  dfti_desc,dfti_desc_inv  ! for MKL FFT
   real*8                               ::  E_recip
-  integer,parameter                    ::  spline_grid=100000
-  integer,parameter                    ::  erfc_grid=1000000
-  real*8,parameter                     ::  erfc_max=10d0       ! this is max value up to which erfc is grid
+  integer                              ::  spline_grid
+  integer                              ::  erfc_grid
+  real*8                               ::  erfc_max        ! this is max value up to which erfc is grid
   real*8,dimension(:), pointer         ::  B6_spline,B5_spline,B4_spline,B3_spline
   real*8,dimension(:), pointer         ::  erfc_table
  end type PME_data_type
@@ -274,8 +281,8 @@ implicit none
   real*8, dimension(MAX_N_ATOM_TYPE) :: atype_chg
   integer, dimension(MAX_N_ATOM_TYPE) :: atype_freeze  ! this flag is for freezing atom types
   real*8, dimension(MAX_N_ATOM_TYPE) :: atype_mass    
-  real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_lj_parameter        ! for buckingham, store A,B,C6 (possibly C8,C10), for LJ, store epsilon,sigma ; index 6 is for possible C12 terms
-  real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_lj_parameter_14        ! this is same as atype_lj_parameter array, but stores special values for 1-4 interactions as used in GROMOS-45a3 force field
+  real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_vdw_parameter        ! for SAPT-FF, store A,B,C6,C8,C10,C12, for LJ, store epsilon,sigma
+  real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_vdw_parameter_14        ! this is same as atype_vdw_parameter array, but stores special values for 1-4 interactions as used in GROMOS-45a3 force field
   integer, dimension(MAX_N_MOLE_TYPE,MAX_N_ATOM) :: molecule_type      ! this array contains indices for all types of solute molecules (not framework) end is marked with MAX_N_ATOM+1
   character(MAX_MNAME), dimension(MAX_N_MOLE_TYPE) :: molecule_type_name
   integer                 :: lj_bkghm                ! =1 for bkghm, =2 for lj
@@ -302,6 +309,16 @@ implicit none
 
 !*******************************************************************************************************************************************
 
+
+  ! C6-C12 dispersion damping function tables
+  ! the value of the 6th order Tang Toennies damping function at x=30 is
+  ! 0.99999988268 , 8th order is 0.999997953924096, 10th order is 0.9999776512,
+  ! 12th order is 0.9998323
+  ! This should be a fine max values, since at x=30, the C10/R^10, C12/R^12
+  ! terms should be basically zero for the corresponding distance
+  real*8,parameter:: Tang_Toennies_max=30d0  
+  integer,parameter:: Tang_Toennies_grid=1000 !Tang_Toennies_grid=1000000
+  real*8,dimension(4,Tang_Toennies_grid) :: Tang_Toennies_table, dTang_Toennies_table ! C6 is in 1st index, C8 in 2nd, C10 in 3rd, C12 in 4th
  
 
 ! if trajectory is being restarted, set yes
@@ -323,6 +340,55 @@ implicit none
   integer :: debug
   character(8)::date
   character(10)::time
+
+
+
+
+  contains
+
+  !***************************************************
+  ! this subroutine fills in constant parameters to defined
+  ! data structures.  We would prefer to just assign the parameters
+  ! in the data type definitions, but Fortran won't let you do this...
+  !***************************************************
+  subroutine initialize_constants( file_io_data , verlet_list_data , PME_data )
+  type(file_io_data_type), intent(inout) :: file_io_data
+  type(verlet_list_data_type), intent(inout) :: verlet_list_data
+  type(PME_data_type), intent(inout)         :: PME_data
+
+  ! first fill in constants which is a global variable in this module
+
+  constants%pi=3.141592654d0
+  constants%pi_sqrt=1.772453851d0
+  constants%conv_kJmol_ang2ps2gmol = 100d0  ! converts kJ/mol to A^2/ps^2*g/mol
+  constants%conv_e2A_kJmol = 1389.35465     ! converts e^2/A to kJ/mol
+  constants%boltzmann = 0.008314462d0       ! kB, kJ/mol/K
+
+  ! fill in verlet list parameters
+  verlet_list_data%safe_verlet= 1.2 ! need bigger for long lamallae 1.6
+  verlet_list_data%verlet_thresh =2d0  ! see subroutine update_verlet_displacements for use of this variable
+
+  ! fill in sizes of PME lookup tables
+  PME_data%spline_grid=100000
+  PME_data%erfc_grid=1000000
+  PME_data%erfc_max=10d0       ! this is max value up to which erfc is grid
+
+
+  ! name of velocity checkpoint file
+  file_io_data%ifile_velocity = "velocity_checkpoint"  ! use this if restarting a simulation  
+
+  ! now fill in file handles of file_io_data
+  file_io_data%ifile_gro_file_h=90
+  file_io_data%ifile_ffpmt_file_h=91
+  file_io_data%ifile_top_file_h=92
+  file_io_data%ifile_simpmt_file_h=93
+  file_io_data%ifile_velocity_file_h=94
+  file_io_data%ofile_traj_file_h=95
+  file_io_data%ofile_log_file_h=96
+  file_io_data%ofile_hop_file_h=97
+
+
+  end subroutine initialize_constants
 
 
 end module

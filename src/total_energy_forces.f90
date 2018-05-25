@@ -42,7 +42,7 @@ contains
        ! if flag_verlet_list=0, verlet list is fine, if it's 1, we need to update verlet list
        Select Case(flag_verlet_list)
        Case(1)
-          call construct_verlet_list( verlet_list_data, atom_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
+          call construct_verlet_list( verlet_list_data, atom_data, molecule_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
           ! the "1" input to update_verlet_displacements signals to initialize the displacement array
           call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data , system_data%box, system_data%xyz_to_box_transform , flag_junk, 1 )
        End Select
@@ -67,7 +67,7 @@ contains
     endif
     !***********************************************************************!
 
-    call pme_reciprocal_space_energy_force( system_data, molecule_data, atom_data, PME_data )
+    call pme_reciprocal_space_energy_force( system_data, atom_data, PME_data )
 
     ! now electrostatic energy has both real and reciprocal space contributions,
     ! add Ewald self correction
@@ -116,7 +116,7 @@ contains
   subroutine calculate_kinetic_energy( KE, n_atom, mass, vel_atom, conv_fac )
     use global_variables
     real*8,intent(out) :: KE
-    integer,dimension,intent(in) :: n_atom
+    integer, intent(in) :: n_atom
     real*8,dimension(:),intent(in) :: mass
     real*8,dimension(:,:), intent(in) :: vel_atom
     real*8,intent(in) :: conv_fac

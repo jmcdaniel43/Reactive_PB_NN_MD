@@ -21,8 +21,6 @@ contains
   !  either integers or real numbers into "Simulation Parameters" group
   !*******************************
 
-  call read_simulation_parameters( file_io_data%ifile_simpmt_file_h, file_io_data%ifile_simpmt, system_data, integrator_data, verlet_list_data, PME_data )
-
   subroutine read_simulation_parameters( file_h, ifile_simpmt, system_data, integrator_data, verlet_list_data, PME_data )
     use global_variables
     integer, intent(in)      :: file_h
@@ -30,7 +28,7 @@ contains
     type(system_data_type), intent(inout)   :: system_data
     type(integrator_data_type), intent(inout) :: integrator_data
     type(verlet_list_data_type), intent(inout) :: verlet_list_data
-    type(PME_data_type), intent(inout)  :: PME_data_type
+    type(PME_data_type), intent(inout)  :: PME_data
 
     integer :: inputstatus,ind,ind1
     character(10) :: param_string
@@ -38,7 +36,7 @@ contains
     real*8 :: param_number
     integer:: flag_ensemble=0, flag_n_step=0, flag_n_output=0, flag_temperature=0
     integer:: flag_delta_t=0, flag_real_space_cutoff=0, flag_n_threads=0, flag_lj_bkghm=0,flag_lj_comb_rule=0,flag_lj_comb_rule2=0
-    integer:: flag_na_nslist=0, flag_nb_nslist=0, flag_verlet_cutoff=0, flag_debug=0, flag_grid_Tang_Toennies=0, flag_alpha_sqrt=0, flag_pme_grid=0, flag_spline_order=0, flag_checkpoint_velocity=0
+    integer:: flag_na_nslist=0, flag_nb_nslist=0, flag_nc_nslist=0, flag_verlet_cutoff=0, flag_debug=0, flag_grid_Tang_Toennies=0, flag_alpha_sqrt=0, flag_pme_grid=0, flag_spline_order=0, flag_checkpoint_velocity=0
 
 
     open(unit=file_h,file=ifile_simpmt,status="old")
@@ -210,7 +208,7 @@ contains
     else
        checkpoint_velocity="yes"
        write(*,*) ""
-       write(*,*) " will write atomic velocities to file ", velocity_file
+       write(*,*) " will write atomic velocities to checkpoint velocity_file "
        write(*,*) "every ", n_step_velocity , " steps"
        write(*,*) ""
    endif
@@ -244,15 +242,12 @@ contains
     End Select
 
 
-    ! if we are using grid based construction of verlet list, make sure we've read in grid size
-    Select Case(verlet_list_data%grid_based_construction)
-    Case("yes")
-       if ( ( flag_na_nslist == 0 ) .or. ( flag_nb_nslist == 0 ) .or. ( flag_nc_nslist == 0 ) ) then
-          write(*,*) "must input grid size settings, na_nslist, nb_nslist, nc_nslist, if"
-          write(*,*) "using grid-based verlet-list construction "
-          stop
-       endif
-    End Select
+    ! using grid based construction of verlet list, make sure we've read in grid size
+    if ( ( flag_na_nslist == 0 ) .or. ( flag_nb_nslist == 0 ) .or. ( flag_nc_nslist == 0 ) ) then
+       write(*,*) "must input grid size settings, na_nslist, nb_nslist, nc_nslist, if"
+       write(*,*) "using grid-based verlet-list construction "
+       stop
+    endif
 
   end subroutine read_simulation_parameters
 

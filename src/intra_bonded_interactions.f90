@@ -17,7 +17,7 @@ contains
   subroutine intra_molecular_energy_force( system_data, molecule_data, atom_data )
     use global_variables
     use omp_lib
-    type(system_data_type) , intent(in)  :: system_data
+    type(system_data_type) , intent(inout)  :: system_data
     type(molecule_data_type), dimension(:), intent(in) :: molecule_data
     type(atom_data_type) , intent(inout) :: atom_data
 
@@ -26,13 +26,18 @@ contains
     type(single_molecule_data_type) :: single_molecule_data
 
     integer :: i_mole, i_mole_type
-    real*8 , E_bond, E_angle , E_dihedral
+    real*8  :: E_bond_local, E_angle_local , E_dihedral_local
+    real*8  :: E_bond, E_angle , E_dihedral
+
+
+    ! can't use subobjects in OpenMP reduction clause, so use temporary local variables here
+    E_bond=0; E_angle=0; E_dihedral=0
 
     ! note that not all molecules have dihedrals, and those that do are probably
     ! in continuous indices, so don't split loop into big chunks here
 
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:system_data%E_bond, system_data%E_angle, system_data%E_dihedral)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:E_bond, E_angle, E_dihedral)
     !$OMP DO SCHEDULE(DYNAMIC,1)
     do i_mole = 1, system_data%n_mole
 
@@ -43,22 +48,25 @@ contains
        call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz, atom_force=atom_data%force, atom_type_index=atom_data%atom_type_index )
 
        ! bond energy, force for molecule
-       call intra_molecular_bond_energy_force( E_bond, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
+       call intra_molecular_bond_energy_force( E_bond_local, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
 
        ! angle energy, force for molecule
-       call intra_molecular_angle_energy_force( E_angle, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
+       call intra_molecular_angle_energy_force( E_angle_local, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
 
        ! dihedral energy, force for molecule
-       call intra_molecular_dihedral_energy_force( E_dihedral, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom ) 
+       call intra_molecular_dihedral_energy_force( E_dihedral_local, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom ) 
 
-       system_data%E_bond = system_data%E_bond + E_bond
-       system_data%E_angle = system_data%E_angle + E_angle
-       system_data%E_dihedral = system_data%E_dihedral + E_dihedral
+       E_bond     =   E_bond + E_bond_local
+       E_angle    =   E_angle + E_angle_local
+       E_dihedral =   E_dihedral + E_dihedral_local
 
     enddo
     !$OMP END DO NOWAIT
     !$OMP END PARALLEL
 
+    system_data%E_bond = E_bond
+    system_data%E_angle = E_angle
+    system_data%E_dihedral = E_dihedral
 
 
   end subroutine intra_molecular_energy_force
@@ -233,7 +241,7 @@ contains
 
        ! be careful about numerical instabilities here! if cosine is 1.0000001, acos will return NaN
        if ( cosine < -0.999999999d0 ) then
-          theta = pi
+          theta = constants%pi
        elseif ( cosine > 0.999999999d0 ) then
           theta = 0d0
        else
@@ -409,7 +417,7 @@ contains
 
     ! be careful about numerical instabilities here! if cosine is 1.0000001, acos will return NaN
     if ( cosine < -0.999999999d0 ) then
-       xi = pi
+       xi = constants%pi
     elseif ( cosine > 0.999999999d0 ) then
        xi = 0d0
     else
@@ -439,7 +447,7 @@ contains
        ! don't divide by zero here
        if ( abs(cosine2 - 1d0 ) < small ) then
           ! make sure shift is zero or 180, so that sine is zero
-          if ( (abs( xi0 ) < small ) .or. (abs( xi0 - pi ) < small ) ) then
+          if ( (abs( xi0 ) < small ) .or. (abs( xi0 - constants%pi ) < small ) ) then
              fac = 0d0
           else
              ! sine isn't zero, undefined force
@@ -472,8 +480,8 @@ contains
        ! pi / 2 < xi < pi , then xi was increasing. but an increasing xi in this range
        ! leads to a decreasing xi after the shift.  Therefore, if angle was shifted,
        ! multiply forces by -1.
-       if ( xi > ( pi / 2d0 ) ) then
-          xi = abs( xi - pi )
+       if ( xi > ( constants%pi / 2d0 ) ) then
+          xi = abs( xi - constants%pi )
           shift=1
        else
           shift=0
@@ -550,7 +558,7 @@ contains
   !*****************************************
   subroutine generate_intramolecular_exclusions
     use global_variables
-    integer :: i_molecule_type, i_atom, j_atom, n_bonds, max_search
+    integer :: i_molecule_type, i_atom, n_bonds, max_search
     integer, dimension(:), allocatable :: bond_trajectory
 
     write(*,*) ""
@@ -670,12 +678,10 @@ contains
     integer, intent(in)    :: file_h
     character(*),intent(in):: ifile_topology
 
-    integer :: nargs, ind, flag, flag_eof, i_mole
+    integer :: flag, flag_eof, i_mole
     integer :: flag_bondtypes , flag_angletypes , flag_dihedraltypes 
     integer,dimension(MAX_N_MOLE_TYPE) :: flag_moleculetype
     integer,parameter :: max_param=20
-    character(300) :: input_string
-    character(20),dimension(max_param)::args
 
 
     open(unit=file_h,file=ifile_topology,status="old")
@@ -905,7 +911,7 @@ contains
        read(args(6),*) cth
 
        ! convert to radians
-       th0 = th0 * pi / 180d0
+       th0 = th0 * constants%pi / 180d0
 
        ! store angle parameters for these atomtypes
        atype_angle_parameter(index1,index2,index3,1) = th0
@@ -984,7 +990,7 @@ contains
        read(args(7),*) kxi
 
        ! convert to radians
-       xi0 = xi0 * pi / 180d0
+       xi0 = xi0 * constants%pi / 180d0
 
        ! store dihedral parameters for these atomtypes
        atype_dihedral_parameter(index1,index2,index3,index4,1) = xi0
@@ -1027,7 +1033,7 @@ contains
     integer, intent(out) :: flag_eof 
     integer, dimension(:), intent(inout) :: flag_moleculetype
 
-    integer :: nargs, flag, i_mtype, i_mole_type, ind, i_atom, j_atom, k_atom, l_atom, i_type, j_type, k_type , l_type
+    integer :: nargs, flag, i_mole_type, ind, i_atom, j_atom, k_atom, l_atom, i_type, j_type, k_type , l_type
     integer :: flag_atoms, flag_bonds, flag_angles, flag_dihedrals, flag_exclusions, flag_newmole
     real*8  :: mass_atom
     real*8, parameter :: small = 1D-6

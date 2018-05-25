@@ -34,19 +34,18 @@ contains
   !
   !*************************************************
 
-  subroutine pme_reciprocal_space_energy_force( system_data, molecule_data, atom_data, PME_data )
+  subroutine pme_reciprocal_space_energy_force( system_data, atom_data, PME_data )
     use global_variables
     use MKL_DFTI
     use omp_lib
     implicit none
     type(system_data_type), intent(inout)   :: system_data
-    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
     type(atom_data_type) , intent(inout)    :: atom_data
     type(PME_data_type)  , intent(inout)    :: PME_data 
 
     real*8, dimension(:,:),allocatable::xyz_scale
-    real*8 :: pme_Erecip, force(3)
-    integer:: i_atom, total_atoms, status, n , K
+    real*8 :: pme_Erecip, force(3), kk(3,3)
+    integer:: i_atom, total_atoms, status,  K
     ! arrays begin at index 1 for convenience, 1,1,1 corresponds to 0,0,0
     complex*16,dimension(:,:,:),allocatable::FQ
     real*8,dimension(:), allocatable::q_1r
@@ -54,7 +53,6 @@ contains
     integer:: split_do
 
     ! define local variables for convenience
-    n=PME_data%spline_order
     K=PME_data%pme_grid
     total_atoms = system_data%total_atoms
 
@@ -72,7 +70,7 @@ contains
     !************************************************************************!
 
     ! grid_Q, use scaled coordinates
-    call grid_Q(Q_grid,atom_data%charge,xyz_scale,K,n)
+    call grid_Q(Q_grid,atom_data%charge,xyz_scale,K,PME_data%spline_order,PME_data%spline_grid)
 
 
     !****************************timing**************************************!
@@ -174,10 +172,10 @@ contains
     PME_data%force_recip=0d0
 
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,theta_conv_Q,PME_data%force_recip,xyz_scale,atom_data%charge,K,system_data%box,n,kk,split_do,constants%conv_e2A_kJmol) 
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,theta_conv_Q,PME_data, xyz_scale, atom_data, K, system_data,kk,split_do,constants) 
     !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,total_atoms
-       call derivative_grid_Q(force, theta_conv_Q, atom_data%charge, xyz_scale, i_atom,K,system_data%box,n,kk,constants%conv_e2A_kJmol)
+       call derivative_grid_Q(force, theta_conv_Q, atom_data%charge, xyz_scale, i_atom,K,PME_data%spline_order,PME_data%spline_grid,kk,constants%conv_e2A_kJmol)
        PME_data%force_recip(:,i_atom)=PME_data%force_recip(:,i_atom)+force(:)
     enddo
     !$OMP END DO NOWAIT
@@ -204,14 +202,14 @@ contains
   !*****************************************************************
   ! This subroutine interpolates charges onto Q grid to be used in pme reciprocal space routines
   !*****************************************************************
-  subroutine grid_Q(Q,chg,xyz,K,n)
+  subroutine grid_Q(Q,chg,xyz,K,spline_order,spline_grid)
     use global_variables
     use omp_lib
     real*8, intent(in), dimension(:) :: chg
     real*8, intent(in), dimension(:,:) :: xyz
-    integer,intent(in)::K,n
+    integer,intent(in)::K,spline_order, spline_grid
     real*8,dimension(:,:,:),intent(out)::Q
-    integer::i_atom,tot_atoms, k1,k2,k3,n1,n2,n3,nn1,nn2,nn3,nearpt(3),splindex(3)
+    integer::i_atom,tot_atoms, k1,k2,k3,n1,n2,n3,nearpt(3),splindex(3)
     real*8::sum
     real*8,dimension(3)::u,arg
     integer :: split_do
@@ -229,29 +227,29 @@ contains
 
     ! parameter spline_grid undeclared, but ok
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,n,B6_spline,B4_spline,K,spline_order) REDUCTION(+:Q)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,B6_spline,B4_spline,K,spline_order,spline_grid) REDUCTION(+:Q)
     !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,tot_atoms
        u=xyz(:,i_atom)
        nearpt=floor(u)
 
        ! loop over outer index of Q grid first, to more efficiently use memory
-       ! only need to go to k=0,n-1, for k=n, arg > n, so don't consider this
-       do k3=0,n-1
+       ! only need to go to k=0,spline_order-1, for k=spline_order, arg > spline_order, so don't consider this
+       do k3=0,spline_order-1
           n3=nearpt(3)-k3
           arg(3)=u(3)-dble(n3);
           ! shift index of array storage if < 0
           if(n3<0) then
              n3=n3+K
           endif
-          do k2=0,n-1
+          do k2=0,spline_order-1
              n2=nearpt(2)-k2
              arg(2)=u(2)-dble(n2)
              ! shift index of array storage if < 0
              if(n2<0) then
                 n2=n2+K
              endif
-             do k1=0,n-1
+             do k1=0,spline_order-1
                 n1=nearpt(1)-k1
                 arg(1)=u(1)-dble(n1);
                 ! shift index of array storage if < 0
@@ -291,22 +289,16 @@ contains
   ! see subroutine grid_Q for comments on algorithm, here we have deleted
   ! the redundant comments
   !
-  ! JGM 4/15/15
-  ! note the data structures used in this subroutine (xyz, chg) are in
-  ! molecular storage format (i_mole, i_atom) in contrast to those in grid_Q subroutine
-  !
-  ! we have also changed loop over kvectors to loop over last index of Q_grid first,
-  ! to more efficiently pull from memory
   !*********************************
-  subroutine modify_Q_grid( Q , chg, xyz, n_atom, K, n, spline_grid, operation)
+  subroutine modify_Q_grid( Q , chg, xyz, n_atom, K, spline_order, spline_grid, operation)
     use global_variables
     integer, intent(in)              :: n_atom
     real*8, intent(in), dimension(:) :: chg
     real*8, intent(in), dimension(:,:) :: xyz
-    integer,intent(in)::K,n, spline_grid
+    integer,intent(in)::K, spline_order, spline_grid
     real*8,dimension(:,:,:),intent(inout)::Q
     integer, intent(in) :: operation
-    integer::i,j,k1,k2,k3,n1,n2,n3,nn1,nn2,nn3,nearpt(3),splindex(3)
+    integer::j,k1,k2,k3,n1,n2,n3,nearpt(3),splindex(3)
     real*8::sum
     real*8,dimension(3)::u,arg
     real*8 :: small=1D-6
@@ -316,19 +308,19 @@ contains
           u=xyz(:,j)
           nearpt=floor(u)
           ! loop over outer index of Q grid first, to more efficiently use memory
-          do k3=0,n-1
+          do k3=0,spline_order-1
              n3=nearpt(3)-k3
              arg(3)=u(3)-dble(n3);
              if(n3<0) then
                 n3=n3+K
              endif
-             do k2=0,n-1
+             do k2=0,spline_order-1
                 n2=nearpt(2)-k2
                 arg(2)=u(2)-dble(n2)
                 if(n2<0) then
                    n2=n2+K
                 endif
-                do k1=0,n-1
+                do k1=0,spline_order-1
                    n1=nearpt(1)-k1
                    arg(1)=u(1)-dble(n1);
                    if(n1<0) then
@@ -364,14 +356,14 @@ contains
   !
   ! notice that this is being called in a parallel section of code
   !**************************************************
-  subroutine derivative_grid_Q(force,FQ,chg,xyz,i_atom,K,box,n,kk,conv_e2A_kJmol, flag_update)
+  subroutine derivative_grid_Q(force,FQ,chg,xyz,i_atom,K,spline_order, spline_grid,kk,conv_e2A_kJmol, flag_update)
     use global_variables
-    integer,intent(in)::K,n
+    integer,intent(in)::K,spline_order, spline_grid
     real*8,dimension(3),intent(out)::force
     real*8,dimension(:,:,:),intent(in)::FQ
     integer, intent(in) :: i_atom
     real*8, intent(in), dimension(:) :: chg
-    real*8,intent(in),dimension(3,3)::box,kk
+    real*8,intent(in),dimension(3,3)::kk
     real*8, intent(in), dimension(:,:) :: xyz
     real*8, intent(in)             :: conv_e2A_kJmol
     integer, intent(in), optional :: flag_update
@@ -392,7 +384,7 @@ contains
 
     ! loop over K grid according to memory storage n3, n2, n1
     ! first part of fac
-    do k3=0,n-1
+    do k3=0,spline_order-1
        n3=nearpt(3)-k3
        arg1(3)=u(3)-dble(n3);
        arg2(3) = arg1(3) - 1d0
@@ -403,7 +395,7 @@ contains
 !!!!!!!!get bspline values from grid, therefore must check whether to see if function is being evaluated in non-zero domain, otherwise, can't call array
        ! note arg1 > 0, so don't check for that.  for k1=n, arg1 > n
        !if((arg1(1)<real(n)).and.(0d0<arg1(1))) then
-       do k2=0,n-1
+       do k2=0,spline_order-1
           n2=nearpt(2)-k2
           arg1(2)=u(2)-dble(n2)
           arg2(2) = arg1(2) - 1d0
@@ -412,7 +404,7 @@ contains
              n2=n2+K
           endif
           ! if k1=n, arg1 >= n, so we can exclude that term in the sum, also because we exlude that term in the sum, arg1 <= n , so we dont need to check the limits of the bspline evaluation
-          do k1=0,n-1
+          do k1=0,spline_order-1
              n1=nearpt(1)-k1
              arg1(1)=u(1)-dble(n1);
              arg2(1) = arg1(1) - 1d0
@@ -423,14 +415,14 @@ contains
              fac=0d0
              ! use ceiling here, instead of int (which is faster), if we are not
              ! going to check that g1 > 0
-             g2=ceiling(arg2/real(n-1)*real(spline_grid))
-             g1n=ceiling(arg1/real(n)*real(spline_grid))
-             g1nmin = ceiling(arg1/real(n-1)*real(spline_grid))
+             g2=ceiling(arg2/real(spline_order-1)*real(spline_grid))
+             g1n=ceiling(arg1/real(spline_order)*real(spline_grid))
+             g1nmin = ceiling(arg1/real(spline_order-1)*real(spline_grid))
 
 
 !!!!!force in x direction
              g1=g1n;g1(1)=g1nmin(1);
-             if(arg1(1)<real(n-1)) then 
+             if(arg1(1)<real(spline_order-1)) then 
                 if(spline_order.eq.6) then
                    fac(1)=chg_i*(B5_spline(g1(1))*B6_spline(g1(2))*B6_spline(g1(3)))
                 else
@@ -448,7 +440,7 @@ contains
              endif
 !!!!!!force in y direction
              g1=g1n;g1(2)=g1nmin(2)
-             if ( arg1(2)<real(n-1) ) then 
+             if ( arg1(2)<real(spline_order-1) ) then 
                 if(spline_order.eq.6) then
                    fac(2)=chg_i*(B5_spline(g1(2))*B6_spline(g1(1))*B6_spline(g1(3)))
                 else
@@ -464,7 +456,7 @@ contains
              endif
 !!!!!force in z direction
              g1=g1n;g1(3)=g1nmin(3)
-             if(arg1(3)<real(n-1)) then 
+             if(arg1(3)<real(spline_order-1)) then 
                 if(spline_order.eq.6) then
                    fac(3)=chg_i*(B5_spline(g1(3))*B6_spline(g1(1))*B6_spline(g1(2)))
                 else
@@ -606,7 +598,7 @@ contains
 
     sum=0.D0
     do i=0,n-2
-       tmp=2.D0*pi*dble(m*i)/dble(K)
+       tmp=2.D0*constants%pi*dble(m*i)/dble(K)
        sum=sum+B_spline(dble(i+1),n)*cmplx(cos(tmp),sin(tmp))
 !!$     sum=sum+B6_spline(dble(i+1)/6.*dble(spline_grid))*cmplx(cos(tmp),sin(tmp))
     enddo
