@@ -36,8 +36,6 @@ contains
     integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: gen_cross_terms
     integer:: total_atoms, size, flag_junk
 
-    !********** initialize constants in global variables
-    call initialize_constants( file_io_data , verlet_list_data , PME_data )
 
     !********** this is for generating random velocities for Maxwell-Boltzmann
     call initialize_random_seed
@@ -93,7 +91,7 @@ contains
     End Select
 
     ! system volume
-    system_data%volume = volume( system_data%box(1,:),system_data%box(2,:),system_data%box(3,:) )
+    system_data%volume = volume( system_data%box )
 
     ! initialize the transformation matrix to box coordinates
     call initialize_non_orth_transform ( system_data%box, system_data%xyz_to_box_transform )
@@ -174,14 +172,15 @@ contains
        ! allocate column major
        size=PME_data%spline_order**3
        allocate( dQ_dr(3,size,system_data%total_atoms) , dQ_dr_index(3,size,system_data%total_atoms) )
-       allocate(force_recip(3,system_data%total_atoms) )
 
        ! setup pointers
        PME_data%dQ_dr=>dQ_dr
        PME_data%dQ_dr_index=>dQ_dr_index
-       PME_data%force_recip=>force_recip
     End Select
 
+    ! for storing PME reciprocal space forces
+    allocate(force_recip(3,system_data%total_atoms) )
+    PME_data%force_recip=>force_recip
 
   end subroutine initialize_simulation
 
@@ -252,11 +251,15 @@ contains
 
     ! grid B_splines
        if (PME_data%spline_order .eq. 6) then
+          allocate(B6_spline(PME_data%spline_grid),B5_spline(PME_data%spline_grid))
+          PME_data%B6_spline=>B6_spline;PME_data%B5_spline=>B5_spline;
           do i=1,PME_data%spline_grid
              B6_spline(i)=B_spline(6./dble(PME_data%spline_grid)*dble(i),6)
              B5_spline(i)=B_spline(5./dble(PME_data%spline_grid)*dble(i),5)
           enddo
        else if (PME_data%spline_order .eq. 4) then
+          allocate(B4_spline(PME_data%spline_grid),B3_spline(PME_data%spline_grid))
+          PME_data%B4_spline=>B4_spline;PME_data%B3_spline=>B3_spline;
           do i=1,PME_data%spline_grid
              B4_spline(i)=B_spline(4./dble(PME_data%spline_grid)*dble(i),4)
              B3_spline(i)=B_spline(3./dble(PME_data%spline_grid)*dble(i),3)
@@ -265,7 +268,7 @@ contains
           stop "requested spline order not implemented"
        endif
 
-    !  allocate, set pointer, and grid complementary error function
+    !  allocate, set pointer and grid complementary error function
     allocate(erfc_table(PME_data%erfc_grid))
     ! make sure erfc_max is set big enough to cover distances up to the cutoff
     if ( PME_data%erfc_max < PME_data%alpha_sqrt * real_space_cutoff ) then
@@ -730,7 +733,9 @@ contains
              if( molecule_type(j_mole,i_atom) .eq. MAX_N_ATOM_TYPE + 1) exit
              count = i_atom
           enddo
+
           if( molecule_data(i_mole)%n_atom .eq. count) then
+
              do i_atom=1, molecule_data(i_mole)%n_atom
                 if ( single_molecule_data%atom_type_index(i_atom) .ne. molecule_type(j_mole,i_atom)) then
                    goto 100
@@ -742,6 +747,7 @@ contains
                    goto 100
                 endif
              end if
+
              ! make sure these molecules have the same name to avoid confusion, note this is different on the name
              ! check at the beginning of the loop, because that checks to see if any previous molecule
              ! had the same name, not just this specific molecule

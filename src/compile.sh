@@ -5,23 +5,29 @@
 # better to just use it globally
 
 
+# newer libraries, currently, these are not working on PACE...
+#module load intel/15.0
+#module load openmpi/1.8
+#module load mkl/11.2
+#OMPINCLUDE=/usr/local/pacerepov1/openmpi/1.8/intel-15.0/lib/openmpi/
+#MKLLIB=/usr/local/pacerepov1/intel/mkl/11.2/lib/intel64/
+
+# older intel libraries
 module load intel/12.1.4
 module load openmpi/1.6
 module load mkl/10.0
-
-# new intel
-COMPILER=ifort
-
 OMPINCLUDE=/usr/local/pacerepov1/openmpi/1.6/intel-12.1.4/lib/openmpi/
 MKLLIB=/usr/local/pacerepov1/intel/mkl/10.0.5.25/lib/em64t/
 
+
+COMPILER=ifort
 MKLMOD=./mkl_modules
 
 # WARNING keep these options on!  code is buggy without these flags, 3-body dispersion energy is wrong
-OPT="-openmp -static -check bounds -check uninit -check format -warn declarations -traceback -warn unused -check all "
+#OPT="-O2 -g -openmp -static -check all -warn all -traceback -debug all"
 #OPT="-vec-report3 -openmp -static"
 #OPT="-O3 -qopenmp -static"
-#OPT="-O3 -openmp -static"
+OPT="-O3 -openmp -static"
 
 # note using the -openmp option will result in automatic memory allocation of all arrays, which for ifort could result in a stack overflow
 # therefore if code segfaults on some machines, try ulimit -s unlimited

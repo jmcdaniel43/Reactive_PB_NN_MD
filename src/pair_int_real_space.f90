@@ -98,7 +98,6 @@ contains
     !*******   pme real space energy and force subroutine
     call pairwise_real_space_verlet( system_data , atom_data , verlet_list_data , PME_data )
 
-
     !******************************** intra-molecular real-space interactions *******************************
     do i_mole=1,system_data%n_mole
       if( molecule_data(i_mole)%n_atom > 1) then
@@ -111,6 +110,7 @@ contains
         call intra_molecular_pairwise_energy_force( single_molecule_data%force, system_data%E_elec, system_data%E_vdw,  single_molecule_data ,  molecule_data(i_mole)%molecule_type_index , molecule_data(i_mole)%n_atom, PME_data )
        endif
     enddo
+
 
 
     !****************************timing**************************************!
@@ -183,9 +183,10 @@ contains
        split_do = total_atoms/n_threads+1
     endif
 
+
     !**************************************** use Verlet list ****************************************************************
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, size_vdw_parameter, erf_factor, alpha_sqrt,verlet_list_data, PME_data) REDUCTION(+:E_elec,E_vdw)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, size_vdw_parameter, erf_factor, alpha_sqrt,verlet_list_data, PME_data, constants) REDUCTION(+:E_elec,E_vdw)
     !$OMP CRITICAL
     local_force = 0.D0
     !$OMP END CRITICAL
@@ -198,7 +199,7 @@ contains
        verlet_start = verlet_list_data%verlet_point(i_atom)
        i_index = i_atom + 1
        verlet_finish = verlet_list_data%verlet_point(i_index) - 1
-       n_neighbors = verlet_finish - verlet_start
+       n_neighbors = verlet_finish - verlet_start + 1
 
        ! make sure there's at least one neighbor
        if ( n_neighbors > 0 ) then
@@ -405,9 +406,9 @@ contains
 
        i_type = single_molecule_data%atom_type_index(i_atom)
        ! now loop over atoms and fill in data structures
+       index_excluded=1
+       index_nonexcluded=1
        do j_atom = i_atom + 1, n_atom
-          index_excluded=1
-          index_nonexcluded=1
           j_type = single_molecule_data%atom_type_index(j_atom)
           if ( molecule_exclusions( i_mole_type, i_atom, j_atom ) /= 1 ) then  
               ! nonexcluded            
@@ -430,7 +431,7 @@ contains
               pairwise_neighbor_data_excluded%atom_index(index_excluded) = j_atom 
               pairwise_neighbor_data_excluded%dr(:,index_excluded) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
               pairwise_neighbor_data_excluded%qi_qj(index_excluded)= single_molecule_data%charge(i_atom) * single_molecule_data%charge(j_atom)
-              pairwise_neighbor_data_excluded%dr2(index_excluded) = dot_product( pairwise_neighbor_data_nonexcluded%dr(:,index_excluded), pairwise_neighbor_data_nonexcluded%dr(:,index_excluded) )
+              pairwise_neighbor_data_excluded%dr2(index_excluded) = dot_product( pairwise_neighbor_data_excluded%dr(:,index_excluded), pairwise_neighbor_data_excluded%dr(:,index_excluded) )
               index_excluded = index_excluded + 1
            endif
        enddo
@@ -485,7 +486,7 @@ contains
     !structures and only keep the neighbor atoms within the cutoff distance
     subroutine apply_cutoff_mask( n_neighbors, pairwise_neighbor_data_cutoff, pairwise_neighbor_data_verlet, cutoff_mask )
       integer,intent(in) :: n_neighbors
-      type(pairwise_neighbor_data_type) , intent(out) ::  pairwise_neighbor_data_cutoff
+      type(pairwise_neighbor_data_type) , intent(inout) ::  pairwise_neighbor_data_cutoff
       type(pairwise_neighbor_data_type) ,  intent(in) ::  pairwise_neighbor_data_verlet
       integer, dimension(:), intent(in) :: cutoff_mask
 
@@ -498,6 +499,7 @@ contains
             pairwise_neighbor_data_cutoff%dr2(i_index) =  pairwise_neighbor_data_verlet%dr2(i_atom)
             pairwise_neighbor_data_cutoff%qi_qj(i_index) = pairwise_neighbor_data_verlet%qi_qj(i_atom)
             pairwise_neighbor_data_cutoff%atype_vdw_parameter(:,i_index) = pairwise_neighbor_data_verlet%atype_vdw_parameter(:,i_atom)
+            pairwise_neighbor_data_cutoff%atom_index(i_index) = pairwise_neighbor_data_verlet%atom_index(i_atom)
          i_index = i_index + 1
          endif
       enddo
@@ -528,8 +530,8 @@ contains
      E_vdw = sum( lj_parameters(1,:) / dr12(:) - lj_parameters(2,:) / dr6(:) )
 
      ! this should vectorize...
-     do i_atom=1,size(f_ij)
-        f_ij(:,i_atom) = f_ij(:,i_atom) + dr(:,i_atom) / dr2(i_atom) * ( lj_parameters(1,i_atom) / dr12(i_atom) - lj_parameters(2,i_atom) / dr6(i_atom) )
+     do i_atom=1,size(dr2)
+        f_ij(:,i_atom) = f_ij(:,i_atom) + dr(:,i_atom) / dr2(i_atom) * ( 12d0 * lj_parameters(1,i_atom) / dr12(i_atom) - 6d0 * lj_parameters(2,i_atom) / dr6(i_atom) )
      enddo
 
   end subroutine pairwise_real_space_LJ
@@ -561,8 +563,8 @@ contains
      E_elec = sum( qi_qj / dr_mag * erfc_value * conv_e2A_kJmol )  ! conversion is e^2/Angstrom to kJ/mol
 
      ! this should vectorize...
-     do i_atom=1, size(f_ij)
-        f_ij(:,i_atom)  = f_ij(:,i_atom) + qi_qj(i_atom) * dr(:,i_atom) * ( erfc_value(i_atom) / dr2(i_atom) + erf_factor * exp(-(alpha_sqrt * dr_mag(i_atom)) **2) / dr_mag(i_atom) ) * conv_e2A_kJmol
+     do i_atom=1, size(dr2)
+        f_ij(:,i_atom)  = f_ij(:,i_atom) + qi_qj(i_atom) / dr_mag(i_atom) * dr(:,i_atom) * ( erfc_value(i_atom) / dr2(i_atom) + erf_factor * exp(-(alpha_sqrt * dr_mag(i_atom)) **2) / dr_mag(i_atom) ) * conv_e2A_kJmol
      enddo
 
   end subroutine pairwise_real_space_ewald
@@ -614,7 +616,7 @@ contains
     ! of atom.  We leave this check in for safety, as intra-molecular
     ! interactions are not rate-limiting computation
 
-    do i_atom=1, size(f_ij)
+    do i_atom=1, size(dr2)
        if( dr_mag(i_atom) < small ) then
           E_elec_local = E_elec_local - erf_factor * qi_qj(i_atom) * conv_e2A_kJmol  ! conversion is e^2/Angstrom to kJ/mol
           ! no contribution to force

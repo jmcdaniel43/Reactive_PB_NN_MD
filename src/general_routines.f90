@@ -202,10 +202,10 @@ contains
    character(*), intent(in) :: grofile
    integer, intent(out)     :: n_mole
 
-   integer :: total_atoms, i, i_mole
+   integer :: total_atoms, i, i_mole, junk
    character(5) :: mname, aname
    character(100) :: line
-   real*8  :: r_tmp(3), junk
+   real*8  :: r_tmp(3)
 
    open( file_handle, file=grofile, status='old' )
 
@@ -247,7 +247,7 @@ contains
    real*8, dimension(3) :: r_tmp
    real*8, dimension(3,3) :: box
    character(40),dimension(9)  :: args
-   character(50)::line
+   character(400)::line
 
    read( file_handle, * ) line
    read( file_handle, '(I)' ) total_atoms
@@ -294,7 +294,7 @@ contains
    allocate( molecule_data(i_mole)%atom_index( i_atom + 1 ) ) ! as previous, allocate 1 unit bigger...
    i_start = total_atoms - i_atom
    do j = 1 , i_atom
-       molecule_data(i_mole)%atom_index( j ) = i_start + j - 1
+       molecule_data(i_mole)%atom_index( j ) = i_start + j
    enddo
    call trim_end( mname )
    molecule_data(i_mole)%mname = mname
@@ -517,7 +517,7 @@ contains
     c(:) = box(3,:)
 
     ! calculate the volume and the reciprocal vectors (notice no 2pi)
-    vol = volume( a, b, c )
+    vol = volume( box )
     call crossproduct( a, b, kc ); kc = kc /vol 
     call crossproduct( b, c, ka ); ka = ka /vol
     call crossproduct( c, a, kb ); kb = kb /vol
@@ -533,7 +533,7 @@ contains
   ! reciprocal lattice vectors
   !********************************************
   subroutine create_scaled_direct_coordinates(xyz_scale, xyz, n_atom, kk, K)
-    real*8,dimension(:,:),intent(out):: xyz_scale
+    real*8,dimension(:,:),intent(inout):: xyz_scale
     real*8,dimension(:,:),intent(in) :: xyz
     integer, intent(in)              :: n_atom
     real*8,dimension(:,:),intent(in) :: kk
@@ -542,6 +542,7 @@ contains
     integer :: i_atom,l
     real*8,parameter :: small=1D-6
 
+    xyz_scale=0d0
     do i_atom=1,n_atom
        do l=1,3
           xyz_scale(l,i_atom)=dble(K)*dot_product(kk(l,:),xyz(:,i_atom))
@@ -719,49 +720,49 @@ contains
     ! atomic xyz data
     if ( present(atom_xyz) ) then
        if ( associated(single_molecule_data%xyz) ) then
-          deallocate( single_molecule_data%xyz )
+          nullify( single_molecule_data%xyz )
        endif
        single_molecule_data%xyz=>atom_xyz(:,low_index:high_index)
     endif
     ! atomic velocity data
     if ( present(atom_velocity) ) then
        if ( associated(single_molecule_data%velocity) ) then
-          deallocate( single_molecule_data%velocity )
+          nullify( single_molecule_data%velocity )
        endif
        single_molecule_data%velocity=>atom_velocity(:,low_index:high_index)
     endif
     ! atomic force data
     if ( present(atom_force) ) then
        if ( associated(single_molecule_data%force) ) then
-          deallocate( single_molecule_data%force )
+          nullify( single_molecule_data%force )
        endif
        single_molecule_data%force=>atom_force(:,low_index:high_index)
     endif
     ! atomic mass data
     if ( present(atom_mass) ) then
        if ( associated(single_molecule_data%mass) ) then
-          deallocate( single_molecule_data%mass )
+          nullify( single_molecule_data%mass )
        endif
        single_molecule_data%mass=>atom_mass(low_index:high_index)
     endif
     ! atomic charge data
     if ( present(atom_charge) ) then
        if ( associated(single_molecule_data%charge) ) then
-          deallocate( single_molecule_data%charge )
+          nullify( single_molecule_data%charge )
        endif
        single_molecule_data%charge=>atom_charge(low_index:high_index)
     endif
     ! atom type index data
     if ( present(atom_type_index) ) then
        if ( associated(single_molecule_data%atom_type_index) ) then
-          deallocate( single_molecule_data%atom_type_index )
+          nullify( single_molecule_data%atom_type_index )
        endif
        single_molecule_data%atom_type_index=>atom_type_index(low_index:high_index)
     endif
     ! atomic name data
     if ( present(atom_name) ) then
        if ( associated(single_molecule_data%aname) ) then
-          deallocate( single_molecule_data%aname )
+          nullify( single_molecule_data%aname )
        endif
        single_molecule_data%aname=>atom_name(low_index:high_index)
     endif
@@ -930,7 +931,7 @@ contains
     do i_mole =1 , system_data%n_mole
 
        ! set pointers for this data structure to target molecule
-       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz )
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz, atom_name=atom_data%aname )
 
        do i_atom=1, molecule_data(i_mole)%n_atom
            ! print in nanometers for gro file
@@ -1258,13 +1259,15 @@ contains
 
     ! if initialization
     if ( present(flag_initialize) ) then
-      ! allocate verlet arrays to store old positions, displacements
-      allocate( verlet_xyz_store(3,total_atoms) )
-      allocate( verlet_displacement_store(3,total_atoms) )
-      ! set pointers
-      verlet_list_data%verlet_xyz_store=>verlet_xyz_store
-      verlet_list_data%verlet_displacement_store=>verlet_displacement_store
-      
+      if ( .not. allocated( verlet_xyz_store ) ) then
+         ! allocate verlet arrays to store old positions, displacements
+         allocate( verlet_xyz_store(3,total_atoms) )
+         allocate( verlet_displacement_store(3,total_atoms) )
+         ! set pointers
+         verlet_list_data%verlet_xyz_store=>verlet_xyz_store
+         verlet_list_data%verlet_displacement_store=>verlet_displacement_store
+      endif      
+
       verlet_list_data%verlet_xyz_store = xyz
       verlet_list_data%verlet_displacement_store=0d0
       flag_verlet_list = 0
@@ -1359,7 +1362,6 @@ contains
     ! we use this kind of like a hash, to look up the cell index of an atom
     ! in order to do this, we split the string
     character(10), dimension(:), allocatable :: cell_index_hash
-    real*8,dimension(:,:), allocatable :: atom_list_xyz
 
 
     !****************************timing**************************************!
@@ -1510,7 +1512,7 @@ contains
     ! last atom shouldn't have any neighbors
     verlet_list_data%verlet_point(total_atoms+1) = verlet_index
 
-    deallocate( atom_list_xyz, nslist_cell, cell_index_hash, index_molecule, headlist_cell, endlist_cell )
+    deallocate( nslist_cell, cell_index_hash, index_molecule, headlist_cell, endlist_cell )
 
 
     !****************************timing**************************************!
@@ -1896,9 +1898,15 @@ contains
     ans(3) = a(1)*b(2)-a(2)*b(1)
   end subroutine crossproduct
 
-  real function volume( a, b, c )
+  real function volume( box )
     implicit none
-    real*8, intent(in) :: a(3), b(3), c(3)
+    real*8, dimension(3,3), intent(in) :: box
+    real*8    :: a(3), b(3), c(3)
+   
+    a(:) = box(1,:)
+    b(:) = box(2,:)
+    c(:) = box(3,:)   
+
     volume = a(1) * (b(2)*c(3)-b(3)*c(2)) - a(2) * (b(1)*c(3)-b(3)*c(1)) + a(3) * (b(1)*c(2)-b(2)*c(1))
     volume = abs(volume)
   end function volume

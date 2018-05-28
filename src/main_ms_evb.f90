@@ -44,6 +44,9 @@ program main_ms_evb
   integer :: i_step
  
 
+  !********** initialize constants in global variables
+  call initialize_constants( file_io_data , verlet_list_data , PME_data )
+
   call sort_input_files( file_io_data )
   call check_restart_trajectory( file_io_data )
 
