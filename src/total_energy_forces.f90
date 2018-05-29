@@ -26,10 +26,6 @@ contains
 
     integer :: flag_verlet_list, flag_junk
 
-    !test
-    integer :: i_atom
-    !end test
-
     ! zero forces and all energy components.  It is important to zero All force elements, because for ms-evb we are constantly changing topology
     atom_data%force=0d0
     system_data%potential_energy=0d0
@@ -61,11 +57,6 @@ contains
 
     !****************************  reciprocal-space interactions    *****************
 
-    write(*,*) "forces real space"
-    do i_atom=1,system_data%total_atoms
-       write(*,*) i_atom, atom_data%force(:,i_atom)
-    enddo
-
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -88,11 +79,6 @@ contains
     !***********************************************************************!
 
 
-    write(*,*) "forces after reciprocal space"
-    do i_atom=1,system_data%total_atoms
-       write(*,*) i_atom, atom_data%force(:,i_atom)
-    enddo
-
 
 
 
@@ -112,11 +98,6 @@ contains
     endif
     !***********************************************************************!
 
-
-    write(*,*) "forces after intra-molecular"
-    do i_atom=1,system_data%total_atoms
-       write(*,*) i_atom, atom_data%force(:,i_atom)
-    enddo
 
 
 

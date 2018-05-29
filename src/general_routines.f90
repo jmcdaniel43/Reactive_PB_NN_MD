@@ -944,7 +944,7 @@ contains
 
     ! print box
     box = system_data%box / 10d0
-    write( grofile_h, * ) box(1,1) , box(2,2) , box(3,3) , box(1,2) , box(1,3) , box(2,1) , box(2,3) , box(3,1) , box(3,2)
+    write( grofile_h, '(9F7.4)' ) box(1,1) , box(2,2) , box(3,3) , box(1,2) , box(1,3) , box(2,1) , box(2,3) , box(3,1) , box(3,2)
 
   end subroutine print_gro_file
 

@@ -105,6 +105,7 @@ program main_ms_evb
 
 
   do i_step = 1, integrator_data%n_step
+
      ! this is global variable which may be used for printing in ms-evb
      trajectory_step = n_old_trajectory + i_step
 
