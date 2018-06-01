@@ -867,6 +867,21 @@ contains
     write( log_file, *) "total number of atoms           ", system_data%total_atoms
     write( log_file, *) "volume                          ", system_data%volume
     write( log_file, *) "time step (ps)                  ", integrator_data%delta_t
+    ! print tabulated functions
+    write( log_file, *)  ""
+    write( log_file, *) "********** Tabulated Functions (numerical accuracy)  **********"
+    write( log_file, *) "Bspline table size              ", PME_data%spline_grid
+    write( log_file, *) "erfc    table size              ", PME_data%erfc_grid
+    write( log_file, *) "erfc    max value               ", PME_data%erfc_max
+    ! print ms-evb parameters 
+    Select Case(ms_evb_simulation)
+    Case("yes")
+       write( log_file, *) ""
+       write( log_file, *) "********** MS-EVB Settings **********"
+       write( log_file, *) "evb_max_chain                   ", evb_max_chain
+       write( log_file, *) "evb_reactive_pair_distance      ", evb_reactive_pair_distance
+       write( log_file, *) ""
+    End Select
 
   end subroutine print_simulation_info
 

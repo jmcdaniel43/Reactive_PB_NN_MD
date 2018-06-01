@@ -23,16 +23,15 @@ MKLLIB=/usr/local/pacerepov1/intel/mkl/10.0.5.25/lib/em64t/
 COMPILER=ifort
 MKLMOD=./mkl_modules
 
-# WARNING keep these options on!  code is buggy without these flags, 3-body dispersion energy is wrong
-#OPT="-O2 -g -openmp -static -check all -warn all -traceback -debug all"
+# this first compiler option is for testing...
+#OPT="-O1 -g -openmp -static -check all -warn all -traceback -debug all"
 #OPT="-vec-report3 -openmp -static"
 #OPT="-O3 -qopenmp -static"
-OPT="-O3 -openmp -static"
+OPT="-Ofast -openmp -static"  # note Ofast includes -xHost ISA specific vectorization in addition to -O3 level optimization
 
 # note using the -openmp option will result in automatic memory allocation of all arrays, which for ifort could result in a stack overflow
 # therefore if code segfaults on some machines, try ulimit -s unlimited
 
-# -O0 option for parallel part
 #/opt/intel/mkl/10.0.3.020/include/mkl_dfti.f90
 
 $COMPILER $OPT -c glob_v.f90 read_simulation_parameters.f90 general_routines.f90 -I$MKLLIB -I$MKLMOD -I$OMPINCLUDE

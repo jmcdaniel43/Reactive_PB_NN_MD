@@ -43,7 +43,7 @@ implicit none
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
   character(3)  :: grid_Tang_Toennies ! grid damping functions
 
-  character(3), parameter  :: ms_evb_simulation="no"   ! ms_evb
+  character(3), parameter  :: ms_evb_simulation="yes"   ! ms_evb
   character(3), parameter  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
 
 !***********************************************************************************************
@@ -53,6 +53,21 @@ implicit none
 
   !***********************************************************
   !                         MS-EVB3 parameters
+  !
+  ! distance thresholds for finding acceptor molecules
+  real*8, parameter :: evb_first_solvation_cutoff = 5d0
+  real*8, parameter :: evb_reactive_pair_distance = 2.5d0
+  integer, parameter :: evb_max_neighbors=10  ! this controls the dimensions of some of the evb data structures
+  !
+  ! evb_max_states is the maximum dimension for evb-hamiltonian, and therefore
+  ! should be set to the maximum number of diabats.
+  integer, parameter :: evb_max_states=80
+  !
+  ! maximum size of water chain for proton hopping.  Note this may need to be larger than the number
+  ! of solvation shells for proton transfer.  For instance in a water hexamer, for a particular initial
+  ! proton configuration, may need 6 hops to generate all diabats
+  integer, parameter :: evb_max_chain=3           ! 3 is a good choice for bulk water
+  !
   integer , parameter :: n_proton_max =10
   ! this keeps track of the hydronium molecules
   integer        :: n_hydronium_molecules
@@ -366,11 +381,11 @@ implicit none
 
   ! fill in verlet list parameters
   verlet_list_data%safe_verlet= 1.2 ! need bigger for long lamallae 1.6
-  verlet_list_data%verlet_thresh =2d0  ! see subroutine update_verlet_displacements for use of this variable
+  verlet_list_data%verlet_thresh =1.2d0  ! see subroutine update_verlet_displacements for use of this variable
 
   ! fill in sizes of PME lookup tables
   PME_data%spline_grid=100000
-  PME_data%erfc_grid=1000000
+  PME_data%erfc_grid=100000      !1000000
   PME_data%erfc_max=10d0       ! this is max value up to which erfc is grid
 
 

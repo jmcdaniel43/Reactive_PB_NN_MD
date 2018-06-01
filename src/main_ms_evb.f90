@@ -84,6 +84,12 @@ program main_ms_evb
   write(*,*) ""
   !************
 
+  ! only print here if not a restart
+  Select Case( restart_trajectory )
+  Case("no")
+     call print_simulation_info( file_io_data%ofile_log_file_h , system_data , integrator_data, verlet_list_data, PME_data )
+  End Select
+
 
   call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data )
 
@@ -99,7 +105,6 @@ program main_ms_evb
   Select Case( restart_trajectory )
   Case("no")
      i_step = 0
-     call print_simulation_info( file_io_data%ofile_log_file_h , system_data , integrator_data, verlet_list_data, PME_data )
      call print_step( file_io_data%ofile_traj_file_h, file_io_data%ofile_log_file_h , i_step, system_data, integrator_data, molecule_data, atom_data )
   End Select
 

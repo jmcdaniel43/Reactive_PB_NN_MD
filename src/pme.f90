@@ -139,12 +139,12 @@ contains
     deallocate( FQ, q_1r, q_1d )
 
 
-   !****** PME reciprocal space energy
+    !****** PME reciprocal space energy
     pme_Erecip=.5D0*sum((Q_grid*theta_conv_Q))*constants%conv_e2A_kJmol   
     system_data%E_elec =  system_data%E_elec + pme_Erecip
 
-   
-   ! store the reciprocal space energy for ms-evb if needed
+
+    ! store the reciprocal space energy for ms-evb if needed
     Select Case(ms_evb_simulation)
     Case("yes")
        PME_data%E_recip=pme_Erecip
@@ -152,8 +152,8 @@ contains
 
 
 
-   !*** now compute forces on atoms
-   ! decide how to split the parallel section
+    !*** now compute forces on atoms
+    ! decide how to split the parallel section
     if (n_threads .eq. 1 ) then
        split_do = 1
     else
@@ -631,9 +631,9 @@ contains
     integer :: i_atom
 
     PME_data%Ewald_self = 0.0
-       do i_atom = 1, total_atoms
-          PME_data%Ewald_self = PME_data%Ewald_self - atom_data%charge(i_atom)**2
-       end do
+    do i_atom = 1, total_atoms
+       PME_data%Ewald_self = PME_data%Ewald_self - atom_data%charge(i_atom)**2
+    end do
     PME_data%Ewald_self = PME_data%Ewald_self * PME_data%alpha_sqrt/constants%pi_sqrt
 
     ! convert from e^2/A to kJ/mol energy units

@@ -19,17 +19,6 @@ module ms_evb
   !************************************
 
 
-
-  real*8, parameter :: evb_first_solvation_cutoff = 5d0
-  real*8, parameter :: evb_reactive_pair_distance = 2.5d0
-  integer, parameter :: evb_max_neighbors=10  ! this controls the dimensions of some of the evb data structures
-  ! evb_max_states is the maximum dimension for evb-hamiltonian, and therefore should be set to the maximum number of diabats.  
-  integer, parameter :: evb_max_states=80
-
-  ! maximum size of water chain for proton hopping.  Note this may need to be larger than the number
-  ! of solvation shells for proton transfer.  For instance in a water hexamer, for a particular initial
-  ! proton configuration, may need 6 hops to generate all diabats
-  integer, parameter :: evb_max_chain=3 
   real*8 , dimension(evb_max_states,evb_max_states)  :: evb_hamiltonian
   integer, dimension(evb_max_states,evb_max_states)  :: evb_forces_lookup_index
   real*8, dimension(:,:,:), allocatable :: evb_forces_store
@@ -37,16 +26,14 @@ module ms_evb
 
   ! this data structure is analogous to global atom_data_type, but is meant to
   ! be locally utilized for each diabat, so we don't use pointers here
-  ! we don't really need velocity, mass arrays here, but we keep them for
-  ! consistency with atom_data_type structure
   type atom_data_diabat_type
-   real*8, dimension(:,:), allocatable :: xyz
-   real*8, dimension(:,:), allocatable :: velocity
-   real*8, dimension(:,:), allocatable :: force
-   real*8, dimension(:),  allocatable  :: mass
-   real*8, dimension(:),  allocatable  :: charge
-   integer, dimension(:), allocatable  :: atom_type_index  ! this is index of atom_type to look up force field parameters for this atom
-   character(MAX_ANAME),dimension(:),allocatable :: aname
+     real*8, dimension(:,:), allocatable :: xyz
+     real*8, dimension(:,:), allocatable :: velocity
+     real*8, dimension(:,:), allocatable :: force
+     real*8, dimension(:),  allocatable  :: mass
+     real*8, dimension(:),  allocatable  :: charge
+     integer, dimension(:), allocatable  :: atom_type_index  ! this is index of atom_type to look up force field parameters for this atom
+     character(MAX_ANAME),dimension(:),allocatable :: aname
   end type atom_data_diabat_type
 
 
@@ -303,14 +290,15 @@ contains
     allocate( eigenvalues(diabat_index) , ground_state_eigenvector(diabat_index), hamiltonian(diabat_index, diabat_index) , eigenvectors(diabat_index,diabat_index) )
 
 
-!!$    write(*,*) "hamiltonian"
+!        write(*,*) "hamiltonian"
     hamiltonian=0d0
     do i_state = 1 , diabat_index
+ !            write(*,*) "i_state", i_state
        do j_state = i_state , diabat_index
           hamiltonian( i_state, j_state ) = evb_hamiltonian(i_state,j_state)
           hamiltonian(j_state, i_state ) = hamiltonian(i_state, j_state )
        end do
-!!$       write(*,*) hamiltonian( i_state , : )
+!           write(*,*) hamiltonian( i_state , : )
     end do
 
 
@@ -328,8 +316,6 @@ contains
     end do
     ground_state_eigenvector(:)=eigenvectors(:,ground_state_index)
 
-!!$    write(*,*) "ground state eigenvector"
-!!$    write(*,*) ground_state_eigenvector
 
     ! now get force using Hellmann-Feynman theorem
     force_atoms=0d0
@@ -345,8 +331,8 @@ contains
                 factor= ground_state_eigenvector(i_state) * ground_state_eigenvector(j_state)
              end if
 
-          force_atoms(:,:) = force_atoms(:,:) + factor * evb_forces_store(:,:,index)
-          
+             force_atoms(:,:) = force_atoms(:,:) + factor * evb_forces_store(:,:,index)
+
           end if
        end do
     end do
@@ -426,7 +412,7 @@ contains
     type(atom_data_type)   , intent(inout)      :: atom_data
     type(verlet_list_data_type), intent(inout)  :: verlet_list_data
     type(PME_data_type) , intent(inout)         :: PME_data
-    
+
     integer ::  diabat_index_donor,  i_mole_donor, store_index
     real*8  ::  E_ms_evb_repulsion, E_reference
     real*8,dimension(:,:,:), allocatable :: Q_grid_junk ! this is just for dummy argument to subroutine
@@ -452,6 +438,7 @@ contains
        write(*,*) "ms-evb energy and force for principle diabat started at", time
     endif
     !***********************************************************************!
+
 
     !*********************** energy and force of primary diabat ******************************!
     call calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
@@ -688,7 +675,6 @@ contains
 
     integer :: i_diabat, diabat_index_donor
 
-
     ! temporary diabat data structures
     ! note atom_data_diabat_type does not contain pointers, which is what we want, unlike atom_data_type
     type(atom_data_diabat_type)                             :: atom_data_diabat
@@ -711,6 +697,7 @@ contains
        endif
     endif
 
+
     ! loop over diabats, excluding principle diabat
     call OMP_SET_NUM_THREADS(n_threads)
     !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, system_data, molecule_data, atom_data, PME_data,  hydronium_molecule_index, i_mole_principle, diabat_index,  evb_hamiltonian, evb_diabat_coupling_matrix, store_index ) 
@@ -725,7 +712,7 @@ contains
 
        ! store the forces, this needs to be in critical section, because forces will be stored using store_index, and then store_index will be incremented
        !$OMP CRITICAL
-         call evb_store_forces( i_mole_principle, i_diabat, i_diabat, system_data_diabat%n_mole, system_data_diabat%total_atoms, molecule_data_diabat, atom_data_diabat, store_index )
+       call evb_store_forces( i_mole_principle, i_diabat, i_diabat, system_data_diabat%n_mole, system_data_diabat%total_atoms, molecule_data_diabat, atom_data_diabat, store_index )
        !$OMP END CRITICAL
        ! store the energy
        evb_hamiltonian( i_diabat , i_diabat ) = system_data_diabat%potential_energy
@@ -795,6 +782,10 @@ contains
           dr_com = pbc_dr( r_com_i, r_com_j, shift)
 
           if ( dot_product( dr_com, dr_com ) < evb_first_solvation_cutoff **2 ) then
+
+             ! set pointers for this  molecule to atom_data data structure section
+             call return_molecule_block( single_molecule_data_j , molecule_data(j_mole)%n_atom, molecule_data(j_mole)%atom_index, atom_xyz=atom_data%xyz )
+
              ! loop over all atoms of  target molecule to find acceptor atoms
              ! in general, we could have multiple acceptor atoms for the same acceptor molecule
              ! and if this is the case these are stored as different neighbors
@@ -897,8 +888,8 @@ contains
 
     enddo loop1
 
-  ! now copy back to atom_data structure
-  call copy_to_atom_data( atom_data , atom_data_diabat )
+    ! now copy back to atom_data structure
+    call copy_to_atom_data( atom_data , atom_data_diabat )
 
 
   end subroutine evb_change_diabat_data_structure_topology
@@ -925,24 +916,18 @@ contains
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
     type(single_molecule_data_type) :: single_molecule_data_donor, single_molecule_data_acceptor
 
-    integer :: i_atom_donor_global, i_atom_acceptor_global
-    integer :: i_atom, i_index, i_type
+    integer :: i_atom, i_index, i_type, i_type_new
 
 
     ! need to change this if more than one hydronium
     if ( n_hydronium_molecules > 1 ) stop "see code below"
     hydronium_molecule_index_local(1) = i_mole_acceptor
 
-      
-    ! these are indices of atoms in global atom_data arrays
-    i_atom_donor_global =   molecule_data_diabat(i_mole_donor)%atom_index(i_atom_donor)
-    i_atom_acceptor_global = molecule_data_diabat(i_mole_acceptor)%atom_index(i_atom_acceptor)
-
 
     ! this subroutine shifts data structures for atom transfer.
     ! Here, we're transfering an H atom back from the donor to acceptor
     ! and modifying data structures for this proton transfer
-    call shift_array_data_donor_acceptor_transfer( i_mole_donor, i_atom_donor_global, i_mole_acceptor, i_atom_acceptor_global, molecule_data_diabat, atom_data_diabat%xyz, atom_data_diabat%velocity, atom_data_diabat%force, atom_data_diabat%mass , atom_data_diabat%charge , atom_data_diabat%atom_type_index , atom_data_diabat%aname )
+    call shift_array_data_donor_acceptor_transfer( i_mole_transfer_from=i_mole_donor, i_atom_transfer_from=i_atom_donor, i_mole_transfer_to=i_mole_acceptor, i_atom_transfer_to=i_atom_acceptor, molecule_data_local=molecule_data_diabat, array2dr1=atom_data_diabat%xyz, array2dr2=atom_data_diabat%velocity, array2dr3=atom_data_diabat%force, array1dr1=atom_data_diabat%mass , array1dr2=atom_data_diabat%charge , array1di=atom_data_diabat%atom_type_index , array1dc=atom_data_diabat%aname )
 
     ! set pointers for this data structure to target molecule
     ! molecule structure is for new, post proton transfer topology
@@ -966,12 +951,18 @@ contains
 
     ! now fill in all other acceptor atom types with conjugate base/acid atomtypes
     do i_atom = 1 , molecule_data_diabat(i_mole_acceptor)%n_atom
-      i_type = single_molecule_data_acceptor%atom_type_index(i_atom) 
-      if ( i_atom /= i_atom_acceptor ) then
-          single_molecule_data_acceptor%atom_type_index(i_atom) = evb_conjugate_atom_index(i_type)
+       i_type =  single_molecule_data_acceptor%atom_type_index(i_atom)
+       i_type_new = evb_conjugate_atom_index(i_type)
+       if ( i_atom /= i_atom_acceptor ) then
+          i_type_new = evb_conjugate_atom_index(i_type)
+       else
+          ! proton has been transfered, doesn't change type
+          i_type_new = i_type
        end if
-       ! fill in charges of new atom types of newly formed acid.  atype_chg is a global variable array
-       single_molecule_data_acceptor%charge(i_atom) = atype_chg(i_type)
+       ! fill in names, charges of new atom types of newly formed acid from global variable arrays
+       single_molecule_data_acceptor%atom_type_index(i_atom) = i_type_new
+       single_molecule_data_acceptor%aname(i_atom)  = atype_name(i_type_new)
+       single_molecule_data_acceptor%charge(i_atom) = atype_chg(i_type_new)
     enddo
 
     ! now map the heavy atom of the acceptor to it's specific atom type
@@ -981,14 +972,20 @@ contains
     ! now map the donor atom index
     do i_atom = 1 , molecule_data_diabat(i_mole_donor)%n_atom
        i_type = single_molecule_data_donor%atom_type_index(i_atom)
-       single_molecule_data_donor%atom_type_index(i_atom) = evb_conjugate_atom_index(i_type)
-       ! fill in charges of new atom types of newly formed base.  atype_chg is a global variable array
-       single_molecule_data_donor%charge(i_atom) = atype_chg(i_type)
+       i_type_new = evb_conjugate_atom_index(i_type)
+       ! fill in charges of new atom types of newly formed base from global variable arrays
+       single_molecule_data_donor%atom_type_index(i_atom) = i_type_new
+       single_molecule_data_donor%aname(i_atom)  = atype_name(i_type_new)
+       single_molecule_data_donor%charge(i_atom) = atype_chg(i_type_new)
     enddo
 
     ! molecule index
     molecule_data_diabat(i_mole_donor)%molecule_type_index = evb_conjugate_pairs( molecule_data_diabat(i_mole_donor)%molecule_type_index )
     molecule_data_diabat(i_mole_acceptor)%molecule_type_index = evb_conjugate_pairs( molecule_data_diabat(i_mole_acceptor)%molecule_type_index )  
+
+    ! now molecule name, molecule_type_name is a global variable array of names
+    molecule_data_diabat(i_mole_donor)%mname = molecule_type_name( molecule_data_diabat(i_mole_donor)%molecule_type_index )
+    molecule_data_diabat(i_mole_acceptor)%mname = molecule_type_name( molecule_data_diabat(i_mole_acceptor)%molecule_type_index )
 
     ! may need to reorder data structures for acceptor molecule based on index of acceptor
     ! heavy atom to be consistent with molecule_type array
@@ -1360,10 +1357,9 @@ contains
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
-    type(single_molecule_data_type) :: single_molecule_data_donor, single_molecule_data_acceptor
+    type(single_molecule_data_type) :: single_molecule_data_donor, single_molecule_data_acceptor, single_molecule_data_local
 
-    integer, dimension(:), allocatable :: screen_list, molecule_list
-    integer :: i_atom, j_atom,  i_type, i_mole_type, j_mole_type
+    integer :: i_atom, j_atom,  i_type, i_mole_type, j_mole_type, j_mole
     real*8 :: q_i , q_j, r_mag , q_exchange_transfer
     real*8, dimension(3) :: shift, shiftd, shifta, r_ij, dV_ij, r_com_zundel, xyz_donor, xyz_acceptor, dr(3)
 
@@ -1388,94 +1384,88 @@ contains
 
     r_com_zundel = zundel_r_com( i_mole_donor, i_mole_acceptor, system_data_diabat, molecule_data_diabat , single_molecule_data_donor%mass, single_molecule_data_acceptor%mass, shiftd, shifta ) 
 
-    ! create_screening list for donor/acceptor atoms which we don't include in interactions
-    allocate(molecule_list(2))
-    molecule_list(1) = i_mole_donor; molecule_list(2) = i_mole_acceptor
-    call create_atom_screen_list( screen_list , molecule_list , molecule_data_diabat )
-    deallocate(molecule_list)
-
-    ! this is a sum over coulomb interactions of all water molecules with the 7 atoms of the 
-    ! H5O2+ Zundel complex
-
-    ! first calculate interaction with donor
-    ! donor is currently in its basic topology, as proton has been transferred
-    do i_atom=1, molecule_data_diabat(i_mole_donor)%n_atom
-       ! figure out charge
-       i_type = single_molecule_data_donor%atom_type_index(i_atom)
-       q_i = evb_exchange_charge_atomic( i_type )
-
-       ! note in this subroutine, PBC boundary conditions are taken with respect to the whole Zundel complex, rather
-       ! than the donor and acceptor water molecules individually.  This is so that this energy is invarient to switching the
-       ! donor and acceptor, which may not be the case otherwise, since the centers of mass of the molecules would change, and therefore
-       ! there's no guarantee that the same minimum images would be taken in both cases
-
-       ! get donor coordinate relative to zundel
-       dr(:)  =   pbc_dr( r_com_zundel(:) , single_molecule_data_donor%xyz(:,i_atom), shiftd )
-       xyz_donor = r_com_zundel + dr
-
-       do j_atom = 1, system_data_diabat%total_atoms  ! loop over all solvent atoms
-       ! screen out donor/acceptor interactions which we don't include
-          if ( screen_list(j_atom) == 1 ) then
-
-             shift = pbc_shift( r_com_zundel(:) , atom_data_diabat%xyz(:,j_atom) , system_data_diabat%box , system_data_diabat%xyz_to_box_transform )
-             q_j = atom_data_diabat%charge( j_atom )
-             r_ij = -pbc_dr( xyz_donor(:) , atom_data_diabat%xyz(:,j_atom) , shift )
-             r_mag = dsqrt( dot_product( r_ij , r_ij ) )
-
-             Vex = Vex + q_i * q_j / r_mag * constants%conv_e2A_kJmol     ! convert from e^2/A to kJ/mol
-             dV_ij = - q_i * q_j / r_mag ** 3 * r_ij * constants%conv_e2A_kJmol     ! convert from e^2/A to kJ/mol
-                
-             ! here we need to use pointer to reference molecule block of atom array.  This was set earlier..
-             single_molecule_data_donor%force(:,i_atom) = single_molecule_data_donor%force(:,i_atom) + dV_ij(:)
-             ! here we can directly access the atomic data structure
-             dVex(:, j_atom) = dVex(:, j_atom) - dV_ij
-          endif
-       enddo
-    enddo
-
     ! the transfering proton exchange charge depends on the identity of the donor and acceptor molecules
     i_mole_type = molecule_data_diabat(i_mole_acceptor)%molecule_type_index
     j_mole_type = molecule_data_diabat(i_mole_donor)%molecule_type_index
     q_exchange_transfer = evb_exchange_charge_proton( i_mole_type, j_mole_type )
 
 
-    ! now calculate interaction with acceptor
-    do i_atom=1, molecule_data_diabat(i_mole_acceptor)%n_atom
-       ! figure out charge, last atom in acceptor is transferring proton
-       i_type = molecule_data_diabat(i_mole_acceptor)%atom_index( i_atom )
-       ! note we're using acid topology for acceptor, because we've already transferred the proton
-       if ( i_atom == molecule_data_diabat(i_mole_acceptor)%n_atom ) then
-          ! transferring proton
-          q_i = q_exchange_transfer
-       else
-          q_i = evb_exchange_charge_atomic( i_type )
-       end if
+    ! this is a sum over coulomb interactions of all other solvent molecules with the 7 atoms of the  H5O2+ Zundel comple
 
-       ! see above comment about use of zundel center of mass for PBC shift
+    ! here we loop over solvent molecules rather than the global atom list, and create molecule pointers, because we want to
+    ! shift based on molecule center of mass, so that we don't break up charges
 
-       ! get acceptor coordinate relative to zundel
-       dr(:)  =   pbc_dr( r_com_zundel(:) , single_molecule_data_acceptor%xyz(:,i_atom), shifta )
-       xyz_acceptor = r_com_zundel + dr
+    do j_mole = 1, system_data_diabat%n_mole
+       if ( ( j_mole /= i_mole_donor ) .and. ( j_mole /= i_mole_acceptor ) ) then
 
-       do j_atom = 1, system_data_diabat%total_atoms  ! loop over all solvent atoms
-       ! screen out donor/acceptor interactions which we don't include
-          if ( screen_list(j_atom) == 1 ) then
+          ! get pointer for this molecule to data structures, use dVex for force pointer as above
+          call return_molecule_block( single_molecule_data_local , molecule_data_diabat(j_mole)%n_atom, molecule_data_diabat(j_mole)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=dVex, atom_mass=atom_data_diabat%mass, atom_charge=atom_data_diabat%charge, atom_type_index=atom_data_diabat%atom_type_index )
+ 
+         ! shift for solvent relative to zundel center of mass
+          shift = pbc_shift( r_com_zundel(:) , molecule_data_diabat(j_mole)%r_com , system_data_diabat%box , system_data_diabat%xyz_to_box_transform )
 
-             shift = pbc_shift( r_com_zundel(:) , atom_data_diabat%xyz(:,j_atom), system_data_diabat%box , system_data_diabat%xyz_to_box_transform )
-             q_j = atom_data_diabat%charge( j_atom )
-             r_ij = -pbc_dr( xyz_acceptor(:) , atom_data_diabat%xyz(:,j_atom) , shift )
-             r_mag = dsqrt( dot_product( r_ij , r_ij ) )
+          do j_atom=1, molecule_data_diabat(j_mole)%n_atom
+             q_j = single_molecule_data_local%charge(j_atom)
 
-             Vex = Vex + q_i * q_j / r_mag * constants%conv_e2A_kJmol     !convert from e^2/A to kJ/mol
-             dV_ij = - q_i * q_j / r_mag ** 3 * r_ij * constants%conv_e2A_kJmol ! convert from e^2/A to kJ/mol
+             ! this is a sum over coulomb interactions of all other solvent molecules with the 7 atoms of the  H5O2+ Zundel complex
 
-             ! here we need to use pointer to reference molecule block of atom array.  This was set earlier..
-             single_molecule_data_acceptor%force(:,i_atom) = single_molecule_data_acceptor%force(:,i_atom) + dV_ij(:)
-             ! here we can directly access the atomic data structure
-             dVex(:, j_atom) = dVex(:, j_atom) - dV_ij
+             !******************* interaction with donor *******************
+             ! donor is currently in its basic topology, as proton has been transferred
+             do i_atom=1, molecule_data_diabat(i_mole_donor)%n_atom
+                ! figure out charge
+                i_type = single_molecule_data_donor%atom_type_index(i_atom)
+                q_i = evb_exchange_charge_atomic( i_type )
 
-          endif
-       enddo
+                ! note in this subroutine, PBC boundary conditions are taken with respect to the whole Zundel complex, rather
+                ! than the donor and acceptor water molecules individually.  This is so that this energy is invarient to switching the
+                ! donor and acceptor, which may not be the case otherwise, since the centers of mass of the molecules would change, and therefore
+                ! there's no guarantee that the same minimum images would be taken in both cases
+
+                ! get donor coordinate relative to zundel
+                dr(:)  =   pbc_dr( r_com_zundel(:) , single_molecule_data_donor%xyz(:,i_atom), shiftd )
+                xyz_donor = r_com_zundel + dr
+                r_ij = -pbc_dr( xyz_donor(:) , single_molecule_data_local%xyz(:,j_atom) , shift )
+                r_mag = dsqrt( dot_product( r_ij , r_ij ) )
+
+                Vex = Vex + q_i * q_j / r_mag * constants%conv_e2A_kJmol     ! convert from e^2/A to kJ/mol
+                dV_ij = - q_i * q_j / r_mag ** 3 * r_ij * constants%conv_e2A_kJmol     ! convert from e^2/A to kJ/mol
+
+                ! here we need to use pointer to reference molecule block of atom array.  This was set earlier..
+                single_molecule_data_donor%force(:,i_atom) = single_molecule_data_donor%force(:,i_atom) + dV_ij(:)
+                single_molecule_data_local%force(:,j_atom) = single_molecule_data_local%force(:,j_atom) - dV_ij(:)
+
+             enddo
+
+             !*************** interaction with acceptor *************
+
+             do i_atom=1, molecule_data_diabat(i_mole_acceptor)%n_atom
+                ! figure out charge, last atom in acceptor is transferring proton
+                i_type = single_molecule_data_acceptor%atom_type_index(i_atom)
+                ! note we're using acid topology for acceptor, because we've already transferred the proton
+                if ( i_atom == molecule_data_diabat(i_mole_acceptor)%n_atom ) then
+                   ! transferring proton
+                   q_i = q_exchange_transfer
+                else
+                   q_i = evb_exchange_charge_atomic( i_type )
+                end if
+
+                ! see above comment about use of zundel center of mass for PBC shift
+                ! get acceptor coordinate relative to zundel
+                dr(:)  =   pbc_dr( r_com_zundel(:) , single_molecule_data_acceptor%xyz(:,i_atom), shifta )
+                xyz_acceptor = r_com_zundel + dr
+                r_ij = -pbc_dr( xyz_acceptor(:) , single_molecule_data_local%xyz(:,j_atom) , shift )
+                r_mag = dsqrt( dot_product( r_ij , r_ij ) )
+
+                Vex = Vex + q_i * q_j / r_mag * constants%conv_e2A_kJmol  !convert from e^2/A to kJ/mol
+                dV_ij = - q_i * q_j / r_mag ** 3 * r_ij * constants%conv_e2A_kJmol   ! convert from e^2/A to kJ/mol
+
+                ! here we need to use pointer to reference molecule block of atom  array.  This was set earlier..
+                single_molecule_data_acceptor%force(:,i_atom) = single_molecule_data_acceptor%force(:,i_atom) + dV_ij(:)
+                single_molecule_data_local%force(:,j_atom)    = single_molecule_data_local%force(:,j_atom) - dV_ij(:)
+
+             enddo
+          enddo
+       endif
     enddo
 
 
@@ -1551,7 +1541,6 @@ contains
        i_heavy_acceptor = evb_diabat_proton_log( i_diabat , i_hop, 5 )
        i_atom_acceptor = molecule_data_diabat(i_mole_acceptor)%n_atom + 1
 
-
        ! **********************   forces and energy updates from donor topology
        d_force_atoms=0d0
 
@@ -1563,7 +1552,6 @@ contains
        call ms_evb_intermolecular_repulsion( d_force_atoms , E_donor_ms_evb_repulsion, system_data_diabat, atom_data_diabat, molecule_data_diabat, hydronium_molecule_index_diabat )
        ! reference chemical energy for this adiabatic state
        call get_adiabatic_reference_energy( E_reference_donor, molecule_data_diabat(i_mole_donor)%molecule_type_index )
-
 
        ! now, while we still have data structures in the donor diabat topology, subtract the donor and acceptor contribution
        ! the updated Q_grids will be stored for use in the separate reciprocal space part
@@ -1604,6 +1592,13 @@ contains
        call get_adiabatic_reference_energy( E_reference_acceptor, molecule_data_diabat(i_mole_acceptor)%molecule_type_index )
 
 
+       ! reset molecule pointers now that we've switched to acceptor topology,
+       !      call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge )
+       !      call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge )
+       call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge, atom_mass=atom_data_diabat%mass, atom_type_index = atom_data_diabat%atom_type_index, atom_name=atom_data_diabat%aname )
+       call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz,atom_charge=atom_data_diabat%charge, atom_mass=atom_data_diabat%mass, atom_type_index = atom_data_diabat%atom_type_index, atom_name=atom_data_diabat%aname )
+
+
        !********** donor
        allocate(xyz_scale(3,molecule_data_diabat(i_mole_donor)%n_atom) )
        call create_scaled_direct_coordinates( xyz_scale, single_molecule_data_donor%xyz, molecule_data_diabat(i_mole_donor)%n_atom, kk, PME_data%pme_grid )
@@ -1618,7 +1613,7 @@ contains
        call modify_Q_grid( Q_grid_local, single_molecule_data_acceptor%charge, xyz_scale, molecule_data_diabat(i_mole_acceptor)%n_atom, PME_data%pme_grid, PME_data%spline_order, PME_data%spline_grid, 1 ) ! acceptor
        deallocate(xyz_scale)
 
-      !************************************* add the forces from the acceptor topology
+       !************************************* add the forces from the acceptor topology
        atom_data_diabat%force = atom_data_diabat%force + d_force_atoms
 
        ! output energy
@@ -1709,19 +1704,22 @@ contains
     do i_index = 1, molecule_data_diabat(i_mole_donor)%n_atom
        i_atom  =  molecule_data_diabat(i_mole_donor)%atom_index(i_index)
 
+       ! here we fill in pairwise_atom_data data structures
+       call fill_pairwise_atom_data( i_atom, pairwise_atom_data , atom_data_diabat%xyz, atom_data_diabat%charge, atom_data_diabat%atom_type_index, atype_vdw_parameter )
+
        ! to vectorize, here we loop over all atoms, including atoms within the
        ! molecule.  We will adjust for exclusions before computing forces             
        do j_atom=1,total_atoms
-             ! compute pair displacement
-             pairwise_atom_data%dr(:,j_atom) = single_molecule_data_donor%xyz(:,i_index) - atom_data_diabat%xyz(:,j_atom)
+          ! compute pair displacement
+          pairwise_atom_data%dr(:,j_atom) = single_molecule_data_donor%xyz(:,i_index) - atom_data_diabat%xyz(:,j_atom)
        enddo
        ! now minimum image
        do j_atom=1,total_atoms     
-             ! shift for orthorhombic box
-             do i=1,3
-                pairwise_atom_data%dr(i,j_atom) = pairwise_atom_data%dr(i,j_atom) -  system_data_diabat%box(i,i) * floor( pairwise_atom_data%dr(i,j_atom) / system_data_diabat%box(i,i) + 0.5d0 )
-             end do
-             pairwise_atom_data%dr2(j_atom) = dot_product( pairwise_atom_data%dr(:,j_atom), pairwise_atom_data%dr(:,j_atom) )
+          ! shift for orthorhombic box
+          do i=1,3
+             pairwise_atom_data%dr(i,j_atom) = pairwise_atom_data%dr(i,j_atom) -  system_data_diabat%box(i,i) * floor( pairwise_atom_data%dr(i,j_atom) / system_data_diabat%box(i,i) + 0.5d0 )
+          end do
+          pairwise_atom_data%dr2(j_atom) = dot_product( pairwise_atom_data%dr(:,j_atom), pairwise_atom_data%dr(:,j_atom) )
        enddo
 
        ! screen out donor atoms
@@ -1746,8 +1744,6 @@ contains
        call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff , n_cutoff, size_vdw_parameter )
        ! transfer data from pairwise_neighbor_data_verlet to pairwise_neighbor_data_cutoff using cutoff_mask
        call apply_cutoff_mask( total_atoms, pairwise_neighbor_data_cutoff, pairwise_atom_data, cutoff_mask )
-       ! deallocate old arrays that we don't need anymore
-       call deallocate_pairwise_neighbor_data( pairwise_atom_data )
 
        ! now calculate pairwise forces and energies for this atom and its neighbors
        ! all of these subroutines should vectorize...
@@ -1758,9 +1754,9 @@ contains
 
        ! running addition of forces...
        do j_index=1, n_cutoff
-             j_atom = pairwise_neighbor_data_cutoff%atom_index(j_index)
-             force_atoms(:,i_atom) =  force_atoms(:,i_atom) + pairwise_neighbor_data_cutoff%f_ij(:,j_index)
-             force_atoms(:,j_atom) =  force_atoms(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,j_index)
+          j_atom = pairwise_neighbor_data_cutoff%atom_index(j_index)
+          force_atoms(:,i_atom) =  force_atoms(:,i_atom) + pairwise_neighbor_data_cutoff%f_ij(:,j_index)
+          force_atoms(:,j_atom) =  force_atoms(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,j_index)
        enddo
 
        ! deallocate old arrays that we don't need anymore
@@ -1777,24 +1773,27 @@ contains
     do i_index = 1, molecule_data_diabat(i_mole_acceptor)%n_atom
        i_atom  =  molecule_data_diabat(i_mole_acceptor)%atom_index(i_index)
 
+       ! here we fill in pairwise_atom_data data structures
+       call fill_pairwise_atom_data( i_atom, pairwise_atom_data , atom_data_diabat%xyz, atom_data_diabat%charge, atom_data_diabat%atom_type_index, atype_vdw_parameter )
+
        ! to vectorize, here we loop over all atoms, including atoms within the
        ! molecule.  We will adjust for exclusions before computing forces
        do j_atom=1,total_atoms
-             ! compute pair displacement
-             pairwise_atom_data%dr(:,j_atom) = single_molecule_data_acceptor%xyz(:,i_index) - atom_data_diabat%xyz(:,j_atom)
+          ! compute pair displacement
+          pairwise_atom_data%dr(:,j_atom) = single_molecule_data_acceptor%xyz(:,i_index) - atom_data_diabat%xyz(:,j_atom)
        enddo
        ! now minimum image
        do j_atom=1,total_atoms
-             ! shift for orthorhombic box
-             do i=1,3
-                pairwise_atom_data%dr(i,j_atom) = pairwise_atom_data%dr(i,j_atom) -  system_data_diabat%box(i,i) * floor( pairwise_atom_data%dr(i,j_atom) / system_data_diabat%box(i,i) + 0.5d0 )
-             end do
-             pairwise_atom_data%dr2(j_atom) = dot_product( pairwise_atom_data%dr(:,j_atom), pairwise_atom_data%dr(:,j_atom) )
+          ! shift for orthorhombic box
+          do i=1,3
+             pairwise_atom_data%dr(i,j_atom) = pairwise_atom_data%dr(i,j_atom) -  system_data_diabat%box(i,i) * floor( pairwise_atom_data%dr(i,j_atom) / system_data_diabat%box(i,i) + 0.5d0 )
+          end do
+          pairwise_atom_data%dr2(j_atom) = dot_product( pairwise_atom_data%dr(:,j_atom), pairwise_atom_data%dr(:,j_atom) )
        enddo
 
 
-      ! screen out acceptor atoms,
-      ! also don't count acceptor-donor interaction twice, it has been counted above
+       ! screen out acceptor atoms,
+       ! also don't count acceptor-donor interaction twice, it has been counted above
        allocate(molecule_list(2))
        molecule_list(1) = i_mole_donor ; molecule_list(2) = i_mole_acceptor
        call create_atom_screen_list( screen_list , molecule_list , molecule_data_diabat )
@@ -1818,8 +1817,6 @@ contains
        ! transfer data from pairwise_neighbor_data_verlet to
        ! pairwise_neighbor_data_cutoff using cutoff_mask
        call apply_cutoff_mask( total_atoms, pairwise_neighbor_data_cutoff, pairwise_atom_data, cutoff_mask )
-       ! deallocate old arrays that we don't need anymore
-       call deallocate_pairwise_neighbor_data( pairwise_atom_data )
 
        ! now calculate pairwise forces and energies for this atom and its neighbors
        ! all of these subroutines should vectorize...
@@ -1830,9 +1827,9 @@ contains
 
        ! running addition of forces...
        do j_index=1, n_cutoff
-             j_atom = pairwise_neighbor_data_cutoff%atom_index(j_index)
-             force_atoms(:,i_atom) =  force_atoms(:,i_atom) + pairwise_neighbor_data_cutoff%f_ij(:,j_index)
-             force_atoms(:,j_atom) =  force_atoms(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,j_index)
+          j_atom = pairwise_neighbor_data_cutoff%atom_index(j_index)
+          force_atoms(:,i_atom) =  force_atoms(:,i_atom) + pairwise_neighbor_data_cutoff%f_ij(:,j_index)
+          force_atoms(:,j_atom) =  force_atoms(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,j_index)
        enddo
 
        ! deallocate old arrays that we don't need anymore
@@ -1840,6 +1837,9 @@ contains
 
     enddo  ! end loop over acceptor atoms
 
+
+    ! deallocate old arrays that we don't need anymore
+    call deallocate_pairwise_neighbor_data( pairwise_atom_data )
 
 
     !**********************************  Now intra-molecular interactions *******************
@@ -1853,6 +1853,41 @@ contains
     E_elec_local = 0d0; E_vdw_local = 0d0
     call intra_molecular_pairwise_energy_force( single_molecule_data_acceptor%force, E_elec_local, E_vdw_local, single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%molecule_type_index , molecule_data_diabat(i_mole_acceptor)%n_atom, PME_data )
     dE_real_space = dE_real_space + E_elec_local + E_vdw_local
+
+
+
+
+  contains
+
+    subroutine fill_pairwise_atom_data( i_atom, pairwise_atom_data, xyz, charge, atom_type_index, atype_vdw_parameter )
+      integer, intent(in) :: i_atom
+      type(pairwise_neighbor_data_type),intent(inout) :: pairwise_atom_data
+      real*8, dimension(:,:) , intent(in) :: xyz
+      real*8, dimension(:)   , intent(in) :: charge
+      integer, dimension(:) , intent(in)  :: atom_type_index
+      real*8, dimension(:,:,:) , intent(in) :: atype_vdw_parameter
+
+      integer :: j_atom, i_type, j_type, total_atoms
+      real*8  :: q_i , q_j
+
+      total_atoms = size( charge )
+
+      ! type of central atom i_atom
+      i_type = atom_type_index(i_atom)
+      ! charge of central atom i_atom
+      q_i = charge(i_atom)
+
+      ! loop over all atoms
+      do j_atom = 1, total_atoms
+         j_type = atom_type_index(j_atom)
+         q_j = charge(j_atom)
+         pairwise_atom_data%atom_index(j_atom) = j_atom
+         pairwise_atom_data%xyz(:,j_atom) = xyz(:,j_atom)
+         pairwise_atom_data%qi_qj(j_atom) = q_i * q_j
+         pairwise_atom_data%atype_vdw_parameter(:,j_atom) = atype_vdw_parameter(i_type,j_type,:)
+      end do
+
+    end subroutine fill_pairwise_atom_data
 
 
 
@@ -1886,6 +1921,7 @@ contains
     ! this is used to look up bonded force field parameters for this molecule
     i_donor_type = molecule_data_diabat(i_mole_donor)%molecule_type_index
     i_acceptor_type = molecule_data_diabat(i_mole_acceptor)%molecule_type_index
+
 
     ! set pointers for single_molecule_data to target molecule subarrays of atom_data
     ! set force pointers in single_molecule_data arrays to point to local force_atoms array
@@ -1990,7 +2026,7 @@ contains
 
     !**** parallelize over diabats
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do,theta_conv_Q, CB, dQ_dr,dQ_dr_index,Q_grid_diabats,system_data,atom_data,molecule_data,PME_data,K,kk,i_mole_principle, diabat_index,evb_forces_lookup_index,evb_hamiltonian,evb_forces_store,dfti_desc_local,dfti_desc_inv_local) 
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do,theta_conv_Q, CB, dQ_dr,dQ_dr_index,Q_grid_diabats,system_data,atom_data,molecule_data,PME_data,constants,K,kk,i_mole_principle, diabat_index,evb_forces_lookup_index,evb_hamiltonian,evb_forces_store,dfti_desc_local,dfti_desc_inv_local) 
     !$OMP CRITICAL
     allocate( FQ(K,K,K), Q_local(K,K,K), theta_conv_Q_local(K,K,K), q_1r(K**3), q_1d(K**3), pme_force_recip_diabat(3,system_data%total_atoms) )
     !$OMP END CRITICAL
@@ -2026,9 +2062,10 @@ contains
 
        do i_atom=1, system_data%total_atoms
           do j=1, size(dQ_dr(1,:,1))    
-             pme_force_recip_diabat(:,i_atom) = pme_force_recip_diabat(:,i_atom) + dQ_dr(:,j,i_atom) * theta_conv_Q_local(dQ_dr_index(1,j,i_atom), dQ_dr_index(2,j,i_atom),dQ_dr_index(3,j,i_atom))
+             pme_force_recip_diabat(:,i_atom) = pme_force_recip_diabat(:,i_atom) + dQ_dr(:,j,i_atom) * theta_conv_Q_local(dQ_dr_index(1,j,i_atom), dQ_dr_index(2,j,i_atom),dQ_dr_index(3,j,i_atom))*constants%conv_e2A_kJmol
           enddo
        enddo
+
 
        ! dQ_dr is stored in scaled coordinates, convert to general coordinates
        do i_atom=1, system_data%total_atoms
@@ -2201,6 +2238,7 @@ contains
        deallocate( xyz_scale )
 
     enddo loop1
+
 
 
     !***************************************** now map forces back to principle diabat topology using recursive subroutine
@@ -2490,7 +2528,7 @@ contains
     integer, intent(in), optional :: initialize
 
     integer :: pme_grid
-   
+
     pme_grid=size(Q_grid_local(:,1,1))
 
     ! if initialize
@@ -2581,9 +2619,9 @@ contains
        ! set up temporary data structures needed for backmapping
        allocate( molecule_data_local(n_mole) )
        do i_mole=1,n_mole
-         allocate(molecule_data_local(i_mole)%atom_index(size(molecule_data_diabat(i_mole)%atom_index(:))))
-         molecule_data_local(i_mole)%atom_index = molecule_data_diabat(i_mole)%atom_index
-         molecule_data_local(i_mole)%n_atom = molecule_data_diabat(i_mole)%n_atom
+          allocate(molecule_data_local(i_mole)%atom_index(size(molecule_data_diabat(i_mole)%atom_index(:))))
+          molecule_data_local(i_mole)%atom_index = molecule_data_diabat(i_mole)%atom_index
+          molecule_data_local(i_mole)%n_atom = molecule_data_diabat(i_mole)%n_atom
        enddo
        i_hop=1  ! i_hop is updated in recursive calls, start at 1
        ! now map forces back to principle diabat topology using recursive subroutine
@@ -2630,7 +2668,6 @@ contains
     real*8, dimension(:,:), intent(inout) :: force_diabat
 
     integer :: i_hop_local, i_mole_donor, i_atom_donor, i_mole_acceptor, i_atom_acceptor
-    integer :: i_atom_donor_global, i_atom_acceptor_global
 
     ! first donor is always principle hydronium
     ! set i_mole_acceptor equal to this, because
@@ -2638,15 +2675,18 @@ contains
     i_mole_acceptor = i_mole_principle
 
     ! this recursion essentially does the following do loop
-    ! loop through all proton hops.  A negative integer signals the end of the chain
+    ! loop through all proton hops.  A negative integer or end of array (evb_max_chain) signals the end of the chain
     ! do i_hop=1, evb_max_chain
     !    if ( evb_diabat_proton_log( diabat_index , i_hop, 1 ) < 0 ) exit
 
-    if ( evb_diabat_proton_log( diabat_index , i_hop, 1 ) < 0 ) then
+    if ( i_hop > evb_max_chain  ) then
        ! end the recursive loop, and start back-mapping data structure in reverse order
        return
-       
-    else
+    else if ( evb_diabat_proton_log( diabat_index , i_hop, 1 ) < 0  )  then
+       ! end the recursive loop, and start back-mapping data structure in reverse order
+       return
+    end if 
+   
        i_mole_donor = i_mole_acceptor
        i_atom_donor = evb_diabat_proton_log( diabat_index , i_hop, 2 )
        i_mole_acceptor = evb_diabat_proton_log( diabat_index , i_hop, 4 )
@@ -2655,17 +2695,19 @@ contains
        i_hop_local = i_hop + 1
        call map_diabat_force_to_principle_recursive( diabat_index, i_hop_local, i_mole_acceptor, molecule_data_local, force_diabat )
 
+
        ! this code evaluates only after we're done with recursion and looping back
-       ! these are indices of atoms in global atom_data arrays
-       i_atom_donor_global = molecule_data_local(i_mole_donor)%atom_index(i_atom_donor)
-       i_atom_acceptor_global = molecule_data_local(i_mole_acceptor)%atom_index(i_atom_acceptor)
+
+       ! in acceptor topology, so this line is what we want...
+       ! note molecule_data_local has now been modified by any recursive calls to subroutine
+       i_atom_acceptor = molecule_data_local(i_mole_acceptor)%n_atom
+
 
        ! this subroutine shifts data structures for atom transfer.
        ! Here, we're transfering the atom back from the acceptor to the donor to
        ! recreate the original data topology of the principle diabat
-       call shift_array_data_donor_acceptor_transfer( i_mole_acceptor, i_atom_acceptor_global, i_mole_donor , i_atom_donor_global , molecule_data_local , array2dr1=force_diabat )
+       call shift_array_data_donor_acceptor_transfer( i_mole_transfer_from=i_mole_acceptor, i_atom_transfer_from=i_atom_acceptor, i_mole_transfer_to=i_mole_donor, i_atom_transfer_to=i_atom_donor , molecule_data_local=molecule_data_local , array2dr1=force_diabat )
 
-    end if
 
   end subroutine map_diabat_force_to_principle_recursive
 
@@ -2691,8 +2733,8 @@ contains
   !
   ! for example, array2dr1 should be set to the first 2d real array that needs updated
   !**************************
-  subroutine shift_array_data_donor_acceptor_transfer( i_mole_transfer_from, i_atom_transfer_from_global, i_mole_transfer_to, i_atom_transfer_to_global, molecule_data_local, array2dr1, array2dr2, array2dr3, array1dr1 , array1dr2 , array1di , array1dc )
-    integer, intent(in)  :: i_mole_transfer_from, i_mole_transfer_to, i_atom_transfer_from_global, i_atom_transfer_to_global
+  subroutine shift_array_data_donor_acceptor_transfer( i_mole_transfer_from, i_atom_transfer_from, i_mole_transfer_to, i_atom_transfer_to, molecule_data_local, array2dr1, array2dr2, array2dr3, array1dr1 , array1dr2 , array1di , array1dc )
+    integer, intent(in)  :: i_mole_transfer_from, i_mole_transfer_to, i_atom_transfer_from, i_atom_transfer_to
     type(molecule_data_type), dimension(:), intent(inout) :: molecule_data_local
     real*8, dimension(:,:), intent(inout), optional :: array2dr1, array2dr2, array2dr3
     real*8, dimension(:)  , intent(inout), optional :: array1dr1, array1dr2
@@ -2700,132 +2742,159 @@ contains
     character(*), dimension(:), intent(inout),optional :: array1dc
 
     real*8 :: array_element1(3),array_element2(3),array_element3(3), elementr1, elementr2
-    integer :: elementi
+    integer :: i_atom_transfer_to_global, i_atom_transfer_from_global, elementi
     character(MAX_ANAME) :: elementc
-    
+
     integer :: i_mole, i_atom, n_elements, i_index, shift
 
+    ! input 'i_atom_transfer_from' and 'i_atom_transfer_to" are the integer
+    ! index of the atom within the molecule.  
     ! i_atom_transfer_from_global and i_atom_transfer_to_global are absolute indices of atoms in global array
+    ! finding these indices depends on whether we are shifting arrays up or down
+
+    ! see which molecule comes first, this determines whether we are shifting data up or down in array
+    if ( i_mole_transfer_from < i_mole_transfer_to ) then
+       ! here we are shifting data up in array
+       i_atom_transfer_from_global = molecule_data_local(i_mole_transfer_from)%atom_index(i_atom_transfer_from) ! this is position that we shift up to
+       i_atom_transfer_to_global  =  molecule_data_local(i_mole_transfer_to)%atom_index(i_atom_transfer_to-1)  ! this is last array postion that we adjust
+    else
+       ! here we are shifting data down in array
+       i_atom_transfer_from_global = molecule_data_local(i_mole_transfer_from)%atom_index(i_atom_transfer_from) ! this is last array position that we shift down to
+       
+       ! this if-statement shouldn't be necessary (evaluates the same), but we include for clarity
+       if ( i_atom_transfer_to > molecule_data_local(i_mole_transfer_to)%n_atom) then
+            ! as we are shifting data down, the new acceptor atom will be in the first spot of the next molecule after the acceptor, the line below gives us what we want        
+            i_atom_transfer_to_global  = molecule_data_local(i_mole_transfer_to)%atom_index(i_atom_transfer_to-1) + 1 ! this is first array position that we adjust
+       else
+            i_atom_transfer_to_global  = molecule_data_local(i_mole_transfer_to)%atom_index(i_atom_transfer_to)
+       end if
+    endif
+
+
+    !update data structures that are present
+    if ( present( array2dr1 ) ) then
+       array_element1(:) = array2dr1(:,i_atom_transfer_from_global)
+    end if
+    if ( present( array2dr2 ) ) then
+       array_element2(:) = array2dr2(:,i_atom_transfer_from_global)
+    end if
+    if ( present( array2dr3 ) ) then
+       array_element3(:) = array2dr3(:,i_atom_transfer_from_global)
+    end if
+    if ( present( array1dr1 ) ) then
+       elementr1 = array1dr1(i_atom_transfer_from_global)
+    end if
+    if ( present( array1dr2 ) ) then
+       elementr2 = array1dr2(i_atom_transfer_from_global)
+    end if
+    if ( present( array1di ) ) then
+       elementi     = array1di(i_atom_transfer_from_global)
+    end if
+    if ( present( array1dc ) ) then
+       elementc     = array1dc(i_atom_transfer_from_global)
+    end if
+
+    !********** loop through data arrays and shift elements up or down  *********
+
+
+    n_elements = abs( i_atom_transfer_to_global - i_atom_transfer_from_global )
+    ! if i_atom_transfer_from_global < i_atom_transfer_to_global, the
+    ! following loop would look like
+    !do i_atom = i_atom_transfer_from_global, i_atom_transfer_to_global-1
+    do i_index=1, n_elements
+
+       ! if i_atom_transfer_from_global is before i_atom_transfer_to_global, shift data up in array
+       if ( i_atom_transfer_from_global < i_atom_transfer_to_global ) then
+          i_atom = i_atom_transfer_from_global + i_index - 1
+          shift=1
+       else
+          ! else acceptor is after donor, shift data down in array
+          ! copy from last to first
+          i_atom = i_atom_transfer_from_global - i_index + 1
+          shift=-1
+       endif
+
+       if ( present( array2dr1 ) ) then
+          array2dr1(:,i_atom) = array2dr1(:,i_atom+shift)
+       end if
+       if ( present( array2dr2 ) ) then
+          array2dr2(:,i_atom) = array2dr2(:,i_atom+shift)
+       end if
+       if ( present( array2dr3 ) ) then
+          array2dr3(:,i_atom) = array2dr3(:,i_atom+shift)
+       end if
+       if ( present( array1dr1 ) ) then
+          array1dr1(i_atom) = array1dr1(i_atom+shift)
+       end if
+       if ( present( array1dr2 ) ) then
+          array1dr2(i_atom) = array1dr2(i_atom+shift)
+       end if
+       if ( present( array1di ) ) then
+          array1di(i_atom)  = array1di(i_atom+shift)
+       end if
+       if ( present( array1dc ) ) then
+          array1dc(i_atom)  = array1dc(i_atom+shift)
+       end if
+
+    enddo
+
+    ! now fill in H atom that was transferred
+    if ( present( array2dr1 ) ) then
+       array2dr1(:,i_atom_transfer_to_global) = array_element1(:)
+    end if
+    if ( present( array2dr2 ) ) then
+       array2dr2(:,i_atom_transfer_to_global) = array_element2(:)
+    end if
+    if ( present( array2dr3 ) ) then
+       array2dr3(:,i_atom_transfer_to_global) = array_element3(:)
+    end if
+    if ( present( array1dr1 ) ) then
+       array1dr1(i_atom_transfer_to_global)   = elementr1
+    end if
+    if ( present( array1dr2 ) ) then
+       array1dr2(i_atom_transfer_to_global)   = elementr2
+    end if
+    if ( present( array1di ) ) then
+       array1di(i_atom_transfer_to_global)    = elementi
+    end if
+    if ( present( array1dc ) ) then
+       array1dc(i_atom_transfer_to_global)    = elementc
+    end if
 
 
 
-           !update data structures that are present
-           if ( present( array2dr1 ) ) then
-               array_element1(:) = array2dr1(:,i_atom_transfer_from_global)
-           end if
-           if ( present( array2dr2 ) ) then
-               array_element2(:) = array2dr2(:,i_atom_transfer_from_global)
-           end if
-           if ( present( array2dr3 ) ) then
-               array_element3(:) = array2dr3(:,i_atom_transfer_from_global)
-           end if
-           if ( present( array1dr1 ) ) then
-               elementr1 = array1dr1(i_atom_transfer_from_global)
-           end if
-           if ( present( array1dr2 ) ) then
-               elementr2 = array1dr2(i_atom_transfer_from_global)
-           end if
-           if ( present( array1di ) ) then
-               elementi     = array1di(i_atom_transfer_from_global)
-           end if
-           if ( present( array1dc ) ) then
-               elementc     = array1dc(i_atom_transfer_from_global)
-           end if
+    if ( i_atom_transfer_from_global < i_atom_transfer_to_global )  then
+       ! here we've shifted elements up in array
+       ! shift atom_indexes down one for all molecules beyond i_mole_transfer_from
+       do i_mole = i_mole_transfer_from + 1, i_mole_transfer_to
+          do i_atom = 1, molecule_data_local(i_mole)%n_atom
+             molecule_data_local(i_mole)%atom_index(i_atom) = molecule_data_local(i_mole)%atom_index(i_atom) - 1
+          enddo
+       enddo
+    else
+       ! here we've shifted elements down in array
+       ! shift atom_indexes up one for all molecules after i_mole_transfer_to
+       do i_mole = i_mole_transfer_to + 1 , i_mole_transfer_from
+          do i_atom = 1, molecule_data_local(i_mole)%n_atom
+             molecule_data_local(i_mole)%atom_index(i_atom) = molecule_data_local(i_mole)%atom_index(i_atom) + 1
+          enddo
+       enddo
+       ! now shift atoms in i_mole_transfer_to, from i_atom_transfer_to+1 on
+       if ( i_atom_transfer_to > molecule_data_local(i_mole_transfer_to)%n_atom ) then  ! if not last atom
+          do i_atom = i_atom_transfer_to + 1, molecule_data_local(i_mole_transfer_to)%n_atom   ! note the last atom will be updated below
+             molecule_data_local(i_mole_transfer_to)%atom_index(i_atom) = molecule_data_local(i_mole_transfer_to)%atom_index(i_atom) + 1
+          enddo
+       endif
+    end if
 
-           !********** loop through data arrays and shift elements up or down  *********
-
-           n_elements = abs( i_atom_transfer_to_global - i_atom_transfer_from_global )
-           ! if i_atom_transfer_from_global < i_atom_transfer_to_global, the
-           ! following loop would look like
-           !do i_atom = i_atom_transfer_from_global, i_atom_transfer_to_global-1
-           do i_index=1, n_elements
-
-               ! if i_atom_transfer_from_global is before i_atom_transfer_to_global, shift data up in array
-               if ( i_atom_transfer_from_global < i_atom_transfer_to_global ) then
-                  i_atom = i_atom_transfer_from_global + i_index - 1
-                  shift=1
-               else
-                  ! else acceptor is after donor, shift data down in array
-                  ! copy from last to first
-                  i_atom = i_atom_transfer_from_global - i_index + 1
-                  shift=-1
-               endif
-
-               if ( present( array2dr1 ) ) then
-                  array2dr1(:,i_atom) = array2dr1(:,i_atom+shift)
-               end if
-               if ( present( array2dr2 ) ) then
-                  array2dr2(:,i_atom) = array2dr2(:,i_atom+shift)
-               end if
-               if ( present( array2dr3 ) ) then
-                  array2dr3(:,i_atom) = array2dr3(:,i_atom+shift)
-               end if
-               if ( present( array1dr1 ) ) then
-                  array1dr1(i_atom) = array1dr1(i_atom+shift)
-               end if
-               if ( present( array1dr2 ) ) then
-                  array1dr2(i_atom) = array1dr2(i_atom+shift)
-               end if
-               if ( present( array1di ) ) then
-                  array1di(i_atom)  = array1di(i_atom+shift)
-               end if
-               if ( present( array1dc ) ) then
-                  array1dc(i_atom)  = array1dc(i_atom+shift)
-               end if
-
-           enddo
-
-           ! now fill in H atom that was transferred
-           if ( present( array2dr1 ) ) then
-               array2dr1(:,i_atom_transfer_to_global) = array_element1(:)
-           end if
-           if ( present( array2dr2 ) ) then
-               array2dr2(:,i_atom_transfer_to_global) = array_element2(:)
-           end if
-           if ( present( array2dr3 ) ) then
-               array2dr3(:,i_atom_transfer_to_global) = array_element3(:)
-           end if
-           if ( present( array1dr1 ) ) then
-               array1dr1(i_atom_transfer_to_global)   = elementr1
-           end if
-           if ( present( array1dr2 ) ) then
-               array1dr2(i_atom_transfer_to_global)   = elementr2
-           end if
-           if ( present( array1di ) ) then
-               array1di(i_atom_transfer_to_global)    = elementi
-           end if
-           if ( present( array1dc ) ) then
-               array1dc(i_atom_transfer_to_global)    = elementc
-           end if
+    ! now add back index of donated proton, that the array size is n_atom+1
+    ! to account for proton transfers
+    molecule_data_local(i_mole_transfer_to)%atom_index(molecule_data_local(i_mole_transfer_to)%n_atom + 1) = molecule_data_local(i_mole_transfer_to)%atom_index(molecule_data_local(i_mole_transfer_to)%n_atom)+ 1
 
 
-
-         if ( i_atom_transfer_from_global < i_atom_transfer_to_global )  then
-           ! here we've shifted elements up in array
-           ! shift atom_indexes down one for all molecules beyond i_mole_transfer_from
-           do i_mole = i_mole_transfer_from + 1, i_mole_transfer_to
-              do i_atom = 1, molecule_data_local(i_mole)%n_atom
-                 molecule_data_local(i_mole)%atom_index(i_atom) = molecule_data_local(i_mole)%atom_index(i_atom) - 1
-              enddo
-           enddo
-         else
-           ! here we've shifted elements down in array
-           ! shift atom_indexes up one for all molecules after i_mole_transfer_to
-           do i_mole = i_mole_transfer_to + 1 , i_mole_transfer_from
-             do i_atom = 1, molecule_data_local(i_mole)%n_atom
-                 molecule_data_local(i_mole)%atom_index(i_atom) = molecule_data_local(i_mole)%atom_index(i_atom) + 1
-             enddo
-           enddo
-         end if
-
-         ! now add back index of donated proton, that the array size is n_atom+1
-         ! to account for proton transfers
-         molecule_data_local(i_mole_transfer_to)%atom_index(molecule_data_local(i_mole_transfer_to)%n_atom + 1) = molecule_data_local(i_mole_transfer_to)%atom_index(molecule_data_local(i_mole_transfer_to)%n_atom)+ 1
-
-
-       ! now update number of atoms in donor/acceptor
-       molecule_data_local(i_mole_transfer_to)%n_atom = molecule_data_local(i_mole_transfer_to)%n_atom + 1
-       molecule_data_local(i_mole_transfer_from)%n_atom = molecule_data_local(i_mole_transfer_from)%n_atom - 1
+    ! now update number of atoms in donor/acceptor
+    molecule_data_local(i_mole_transfer_to)%n_atom = molecule_data_local(i_mole_transfer_to)%n_atom + 1
+    molecule_data_local(i_mole_transfer_from)%n_atom = molecule_data_local(i_mole_transfer_from)%n_atom - 1
 
 
 
@@ -3022,7 +3091,7 @@ contains
   ! of these molecules have screening elements set to zero
   !*********************************
   subroutine create_atom_screen_list( screen_list , molecule_list , molecule_data_diabat ) 
-    integer, dimension(:), intent(out) :: screen_list
+    integer, dimension(:), intent(inout) :: screen_list
     integer, dimension(:), intent(in)  :: molecule_list
     type(molecule_data_type),dimension(:), intent(in) :: molecule_data_diabat
 
@@ -3033,12 +3102,12 @@ contains
 
     do i=1, size(molecule_list)
        i_mole = molecule_list(i)
-        
+
        do i_index=1, molecule_data_diabat(i_mole)%n_atom
           i_atom = molecule_data_diabat(i_mole)%atom_index(i_index)
           screen_list(i_atom) = 0
        end do
-    end do 
+    end do
 
   end subroutine create_atom_screen_list
 
@@ -3055,18 +3124,23 @@ contains
     type(atom_data_type) , intent(in)          :: atom_data
 
     integer :: total_atoms
-    total_atoms = size( atom_data_diabat%xyz(1,:) )
-   
+
+    total_atoms = size( atom_data%xyz(1,:) )
+
     ! first allocate arrays in atom_data_diabat structure
     allocate( atom_data_diabat%xyz(3,total_atoms) )
+    allocate( atom_data_diabat%velocity(3,total_atoms) )
     allocate( atom_data_diabat%force(3,total_atoms) )
+    allocate( atom_data_diabat%mass(total_atoms) )
     allocate( atom_data_diabat%charge(total_atoms) )
     allocate( atom_data_diabat%atom_type_index(total_atoms) )
     allocate( atom_data_diabat%aname(total_atoms) )
 
     ! now copy atom_data
     atom_data_diabat%xyz = atom_data%xyz
+    atom_data_diabat%velocity = atom_data%velocity
     atom_data_diabat%force = atom_data%force
+    atom_data_diabat%mass = atom_data%mass
     atom_data_diabat%charge = atom_data%charge
     atom_data_diabat%atom_type_index = atom_data%atom_type_index
     atom_data_diabat%aname = atom_data%aname
@@ -3086,7 +3160,9 @@ contains
     type(atom_data_type) , intent(inout)          :: atom_data
 
     atom_data%xyz = atom_data_diabat%xyz
+    atom_data%velocity = atom_data_diabat%velocity  
     atom_data%force = atom_data_diabat%force
+    atom_data%mass = atom_data_diabat%mass
     atom_data%charge = atom_data_diabat%charge
     atom_data%atom_type_index = atom_data_diabat%atom_type_index
     atom_data%aname = atom_data_diabat%aname
@@ -3616,7 +3692,7 @@ contains
     call check_evb_read( flag_reference_energy, '[ reference_energy ]' )
     call check_evb_read( flag_donor_acceptor, '[ donor_acceptor ]' )
     call check_evb_read( flag_proton_acceptor, '[ proton_acceptor ]' )
-!    call check_evb_read( flag_anisotropic, '[ anisotropic ]' )
+    !    call check_evb_read( flag_anisotropic, '[ anisotropic ]' )
     call check_evb_read( flag_geometry_factor, '[ geometry_factor ]' )
     call check_evb_read( flag_exchange_charge_atomic, '[ exchange_charge_atomic ]' )
     call check_evb_read( flag_exchange_charge_proton, '[ exchange_charge_proton ]' )

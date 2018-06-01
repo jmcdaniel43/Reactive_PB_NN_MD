@@ -98,6 +98,15 @@ contains
     !*******   pme real space energy and force subroutine
     call pairwise_real_space_verlet( system_data , atom_data , verlet_list_data , PME_data )
 
+
+    !****************************timing**************************************!
+    if(debug .eq. 1) then
+       call date_and_time(date,time)
+       write(*,*) "intra-molecular non-bonded interactions started at", time
+    endif
+    !***********************************************************************!
+
+
     !******************************** intra-molecular real-space interactions *******************************
     do i_mole=1,system_data%n_mole
       if( molecule_data(i_mole)%n_atom > 1) then
@@ -211,6 +220,7 @@ contains
           call gather_neighbor_data( i_atom, verlet_start , verlet_finish , verlet_list_data%neighbor_list, pairwise_neighbor_data_verlet, atom_data%xyz, atom_data%charge, atom_data%atom_type_index, atype_vdw_parameter )
 
           ! this loop should now perfectly vectorize...
+          ! $omp simd
           do j_atom = 1 , n_neighbors
              pairwise_neighbor_data_verlet%dr(:,j_atom) = xyz_i_atom(:) - pairwise_neighbor_data_verlet%xyz(:,j_atom)
           enddo
@@ -231,18 +241,19 @@ contains
              end do
              pairwise_neighbor_data_verlet%dr2(j_atom) = dot_product( pairwise_neighbor_data_verlet%dr(:,j_atom), pairwise_neighbor_data_verlet%dr(:,j_atom) )
           enddo
-
+          ! $omp end simd
 
           ! now check cutoff, and re-organize data structures
           allocate( cutoff_mask(n_neighbors) )
           cutoff_mask=0
-          n_cutoff=0
+          ! $omp simd
           do j_atom = 1 , n_neighbors
              if ( pairwise_neighbor_data_verlet%dr2(j_atom) < real_space_cutoff2 ) then
                 cutoff_mask(j_atom) = 1
-                n_cutoff = n_cutoff + 1
              endif
           enddo
+          ! $omp end simd
+          n_cutoff = sum(cutoff_mask)
 
           ! now allocate datastructure for atoms within cutoff distance
           ! allocate data structure to store data for these neighbors
@@ -261,7 +272,8 @@ contains
           ! all of these subroutines should vectorize...
           call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,  pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )  
           call pairwise_real_space_LJ( E_vdw_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr, pairwise_neighbor_data_cutoff%dr2 ,  pairwise_neighbor_data_cutoff%atype_vdw_parameter )
-          
+ 
+
           E_elec = E_elec + E_elec_local
           E_vdw  = E_vdw  + E_vdw_local
 
@@ -523,6 +535,7 @@ contains
      real*8, dimension(size(dr2)) :: dr6 , dr12
      integer :: i_atom
 
+     ! $omp simd
      dr6 = dr2**3
      dr12 = dr6**2
 
@@ -533,6 +546,8 @@ contains
      do i_atom=1,size(dr2)
         f_ij(:,i_atom) = f_ij(:,i_atom) + dr(:,i_atom) / dr2(i_atom) * ( 12d0 * lj_parameters(1,i_atom) / dr12(i_atom) - 6d0 * lj_parameters(2,i_atom) / dr6(i_atom) )
      enddo
+
+     ! $omp end simd
 
   end subroutine pairwise_real_space_LJ
 
@@ -555,6 +570,8 @@ contains
 
      real*8, dimension(size(dr2)) :: dr_mag, erfc_value
      integer :: i_atom
+  
+     ! $omp simd
 
      dr_mag=sqrt(dr2)
      ! make array with values of the complementary error function applied to alpha_sqrt * distance
@@ -566,6 +583,8 @@ contains
      do i_atom=1, size(dr2)
         f_ij(:,i_atom)  = f_ij(:,i_atom) + qi_qj(i_atom) / dr_mag(i_atom) * dr(:,i_atom) * ( erfc_value(i_atom) / dr2(i_atom) + erf_factor * exp(-(alpha_sqrt * dr_mag(i_atom)) **2) / dr_mag(i_atom) ) * conv_e2A_kJmol
      enddo
+
+     ! $omp end simd
 
   end subroutine pairwise_real_space_ewald
 
