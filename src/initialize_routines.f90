@@ -14,7 +14,7 @@ contains
   !*************************************************************************
   ! this routine  initializes the simulation
   !*************************************************************************
-  subroutine initialize_simulation(system_data, molecule_data, atom_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
+  subroutine initialize_simulation(system_data, molecule_data, atom_data, file_io_data, verlet_list_data, PME_data )
     use global_variables
     use pme_routines
     use bonded_interactions
@@ -24,14 +24,6 @@ contains
     Type(file_io_data_type),intent(inout)               :: file_io_data
     Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
     Type(PME_data_type), intent(inout)                  :: PME_data
-
-    real*8, dimension(:,:), allocatable, target, intent(inout) :: xyz
-    real*8, dimension(:,:), allocatable, target, intent(inout) :: velocity
-    real*8, dimension(:,:), allocatable, target, intent(inout) :: force
-    real*8, dimension(:), allocatable, target,   intent(inout) :: mass
-    real*8, dimension(:), allocatable, target,   intent(inout) :: charge
-    integer, dimension(:), allocatable, target,  intent(inout) :: atom_type_index  
-    character(*),dimension(:), allocatable, target, intent(inout)        :: aname
 
     integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: gen_cross_terms
     integer:: total_atoms, size, flag_junk
@@ -59,23 +51,18 @@ contains
        call scan_grofile_restart( file_io_data%ifile_gro_file_h, n_old_trajectory )
     End Select
 
-    ! this will allocate aname, xyz arrays, and attach pointers from atom_data structure
-    call read_gro( file_io_data%ifile_gro_file_h, system_data, molecule_data, atom_data, aname, xyz )
+    ! this will allocate atom_data%aname, atom_data%xyz arrays
+    call read_gro( file_io_data%ifile_gro_file_h, system_data, molecule_data, atom_data )
 
-    ! ******************  Allocate remainder of atom_data target arrays, initialize, and attach pointers
+    ! ******************  Allocate remainder of atom_data arrays, initialize
     total_atoms = system_data%total_atoms
-    allocate( velocity(3,total_atoms) )
-    allocate( force(3,total_atoms) )
-    allocate( mass(total_atoms) )
-    allocate( charge(total_atoms) )
-    allocate( atom_type_index(total_atoms) )
+    allocate( atom_data%velocity(3,total_atoms) )
+    allocate( atom_data%force(3,total_atoms) )
+    allocate( atom_data%mass(total_atoms) )
+    allocate( atom_data%charge(total_atoms) )
+    allocate( atom_data%atom_type_index(total_atoms) )
 
-    velocity=0d0;force=0d0;mass=0d0;charge=0d0; atom_type_index=0
-    atom_data%velocity=>velocity
-    atom_data%force=>force
-    atom_data%mass=>mass
-    atom_data%charge=>charge
-    atom_data%atom_type_index=>atom_type_index
+    atom_data%velocity=0d0;atom_data%force=0d0;atom_data%mass=0d0;atom_data%charge=0d0; atom_data%atom_type_index=0
 
 
     ! if restarting, read in velocities from restart file
@@ -171,16 +158,12 @@ contains
        end if
        ! allocate column major
        size=PME_data%spline_order**3
-       allocate( dQ_dr(3,size,system_data%total_atoms) , dQ_dr_index(3,size,system_data%total_atoms) )
+       allocate( PME_data%dQ_dr(3,size,system_data%total_atoms) , PME_data%dQ_dr_index(3,size,system_data%total_atoms) )
 
-       ! setup pointers
-       PME_data%dQ_dr=>dQ_dr
-       PME_data%dQ_dr_index=>dQ_dr_index
     End Select
 
     ! for storing PME reciprocal space forces
-    allocate(force_recip(3,system_data%total_atoms) )
-    PME_data%force_recip=>force_recip
+    allocate(PME_data%force_recip(3,system_data%total_atoms) )
 
   end subroutine initialize_simulation
 
@@ -225,12 +208,7 @@ contains
     pme_grid=PME_data%pme_grid
 
     ! allocate arrays
-    allocate(CB(pme_grid,pme_grid,pme_grid),Q_grid(pme_grid,pme_grid,pme_grid),theta_conv_Q(pme_grid,pme_grid,pme_grid))
-
-    ! setup pointers
-    PME_data%CB=>CB
-    PME_data%Q_grid=>Q_grid
-    PME_data%theta_conv_Q=>theta_conv_Q
+    allocate(PME_data%CB(pme_grid,pme_grid,pme_grid),PME_data%Q_grid(pme_grid,pme_grid,pme_grid),PME_data%theta_conv_Q(pme_grid,pme_grid,pme_grid))
 
     ! set up fourier transform descriptors
     length(:)= pme_grid
@@ -251,34 +229,31 @@ contains
 
     ! grid B_splines
        if (PME_data%spline_order .eq. 6) then
-          allocate(B6_spline(PME_data%spline_grid),B5_spline(PME_data%spline_grid))
-          PME_data%B6_spline=>B6_spline;PME_data%B5_spline=>B5_spline;
+          allocate(PME_data%B6_spline(PME_data%spline_grid),PME_data%B5_spline(PME_data%spline_grid))
           do i=1,PME_data%spline_grid
-             B6_spline(i)=B_spline(6./dble(PME_data%spline_grid)*dble(i),6)
-             B5_spline(i)=B_spline(5./dble(PME_data%spline_grid)*dble(i),5)
+             PME_data%B6_spline(i)=B_spline(6./dble(PME_data%spline_grid)*dble(i),6)
+             PME_data%B5_spline(i)=B_spline(5./dble(PME_data%spline_grid)*dble(i),5)
           enddo
        else if (PME_data%spline_order .eq. 4) then
-          allocate(B4_spline(PME_data%spline_grid),B3_spline(PME_data%spline_grid))
-          PME_data%B4_spline=>B4_spline;PME_data%B3_spline=>B3_spline;
+          allocate(PME_data%B4_spline(PME_data%spline_grid),PME_data%B3_spline(PME_data%spline_grid))
           do i=1,PME_data%spline_grid
-             B4_spline(i)=B_spline(4./dble(PME_data%spline_grid)*dble(i),4)
-             B3_spline(i)=B_spline(3./dble(PME_data%spline_grid)*dble(i),3)
+             PME_data%B4_spline(i)=B_spline(4./dble(PME_data%spline_grid)*dble(i),4)
+             PME_data%B3_spline(i)=B_spline(3./dble(PME_data%spline_grid)*dble(i),3)
           enddo
        else
           stop "requested spline order not implemented"
        endif
 
-    !  allocate, set pointer and grid complementary error function
-    allocate(erfc_table(PME_data%erfc_grid))
+    !  allocate and grid complementary error function
+    allocate(PME_data%erfc_table(PME_data%erfc_grid))
     ! make sure erfc_max is set big enough to cover distances up to the cutoff
     if ( PME_data%erfc_max < PME_data%alpha_sqrt * real_space_cutoff ) then
        write(*,*) "please increase setting of erfc_max.  Must have erfc_max > alpha_sqrt * cutoff "
        stop
     end if
 
-    PME_data%erfc_table=>erfc_table
     do i=1,PME_data%erfc_grid
-       erfc_table(i)= erfc(PME_data%erfc_max/dble(PME_data%erfc_grid)*dble(i))
+       PME_data%erfc_table(i)= erfc(PME_data%erfc_max/dble(PME_data%erfc_grid)*dble(i))
     enddo
 
     ! initialize factorial array
@@ -707,7 +682,7 @@ contains
        molecule_type(n_molecule_type,i_atom) = single_molecule_data%atom_type_index(i_atom)
     enddo
     ! mark end
-    if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM_TYPE ) then
+    if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM ) then
        molecule_type(n_molecule_type,molecule_data(i_mole)%n_atom+1) = MAX_N_ATOM_TYPE + 1
     endif
 
@@ -729,7 +704,7 @@ contains
           end if
 
           ! now check to see if they have same number of atoms
-          do i_atom =1, MAX_N_ATOM_TYPE
+          do i_atom =1, MAX_N_ATOM
              if( molecule_type(j_mole,i_atom) .eq. MAX_N_ATOM_TYPE + 1) exit
              count = i_atom
           enddo
@@ -742,7 +717,7 @@ contains
                 endif
              enddo
              ! make sure that we haven't just matched a smaller molecule to part of a larger molecule
-             if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM_TYPE ) then
+             if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM ) then
                 if ( molecule_type(j_mole,molecule_data(i_mole)%n_atom+1 ) .ne. ( MAX_N_ATOM_TYPE + 1 ) ) then
                    goto 100
                 endif
@@ -783,7 +758,7 @@ contains
              molecule_type(n_molecule_type,i_atom) = single_molecule_data%atom_type_index(i_atom)
           enddo
           ! mark end
-          if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM_TYPE ) then
+          if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM ) then
              molecule_type(n_molecule_type,molecule_data(i_mole)%n_atom+1 ) = MAX_N_ATOM_TYPE + 1
           end if
           molecule_type_name(n_molecule_type) = molecule_data(i_mole)%mname
@@ -792,6 +767,7 @@ contains
        endif
     enddo
 
+  call dissociate_single_molecule_data(single_molecule_data)
 
   end subroutine gen_molecule_type_data
 

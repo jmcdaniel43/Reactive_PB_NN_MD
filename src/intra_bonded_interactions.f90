@@ -29,14 +29,13 @@ contains
     real*8  :: E_bond_local, E_angle_local , E_dihedral_local
     real*8  :: E_bond, E_angle , E_dihedral
 
-
     ! can't use subobjects in OpenMP reduction clause, so use temporary local variables here
     E_bond=0; E_angle=0; E_dihedral=0
 
     ! note that not all molecules have dihedrals, and those that do are probably
     ! in continuous indices, so don't split loop into big chunks here
 
-    call OMP_SET_NUM_THREADS(n_threads)
+!    call OMP_SET_NUM_THREADS(n_threads)
     !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:E_bond, E_angle, E_dihedral)
     !$OMP DO SCHEDULE(DYNAMIC,1)
     do i_mole = 1, system_data%n_mole
@@ -59,6 +58,8 @@ contains
        E_bond     =   E_bond + E_bond_local
        E_angle    =   E_angle + E_angle_local
        E_dihedral =   E_dihedral + E_dihedral_local
+
+       call dissociate_single_molecule_data(single_molecule_data)
 
     enddo
     !$OMP END DO NOWAIT
@@ -83,7 +84,7 @@ contains
   subroutine intra_molecular_bond_energy_force( E_bond, single_molecule_data , i_mole_type , n_atom ) 
     use global_variables
     real*8, intent(out) :: E_bond
-    type(single_molecule_data_type) :: single_molecule_data
+    type(single_molecule_data_type), intent(inout):: single_molecule_data
     integer, intent(in) :: i_mole_type, n_atom
 
     integer :: i_atom_type, j_atom_type, i_atom, j_atom
@@ -92,7 +93,7 @@ contains
 
     E_bond = 0d0
     ! loop over bond list for this molecule
-    do i_atom=1,n_atom
+    do i_atom=1,n_atom-1
        do j_atom=i_atom+1,n_atom
           if ( molecule_bond_list(i_mole_type,i_atom,j_atom) == 1 ) then
              ! bond between these two atoms
@@ -179,7 +180,7 @@ contains
   subroutine intra_molecular_angle_energy_force( E_angle, single_molecule_data, i_mole_type, n_atom ) 
     use global_variables
     real*8, intent(out) :: E_angle
-    type(single_molecule_data_type) :: single_molecule_data
+    type(single_molecule_data_type), intent(inout) :: single_molecule_data
     integer, intent(in) :: i_mole_type, n_atom
 
     integer :: i_atom_type, j_atom_type, k_atom_type, i_atom, j_atom, k_atom
@@ -298,7 +299,7 @@ contains
   subroutine intra_molecular_dihedral_energy_force( E_dihedral, single_molecule_data, i_mole_type, n_atom )
     use global_variables
     real*8, intent(out) :: E_dihedral
-    type(single_molecule_data_type) :: single_molecule_data
+    type(single_molecule_data_type), intent(inout) :: single_molecule_data
     integer, intent(in) :: i_mole_type, n_atom
     
     integer :: i_atom_type, j_atom_type, k_atom_type, l_atom_type, i_atom, j_atom, k_atom, l_atom
@@ -319,7 +320,6 @@ contains
 
                    if ( molecule_dihedral_list(i_mole_type,i_atom,j_atom,k_atom,l_atom) == 1 ) then
 
-
                       i_atom_type = single_molecule_data%atom_type_index(i_atom)
                       j_atom_type = single_molecule_data%atom_type_index(j_atom)
                       k_atom_type = single_molecule_data%atom_type_index(k_atom)
@@ -337,7 +337,7 @@ contains
                       single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) - f_ji(:)
                       single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) + f_ji(:) - f_kj(:)
                       single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:) - f_lk(:)
-                      single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) - f_lk(:)
+                      single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) + f_lk(:)
 
                    endif
 

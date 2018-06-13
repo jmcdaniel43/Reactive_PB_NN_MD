@@ -36,7 +36,7 @@ implicit none
   ! this is maximum number of atoms per molecule, which is used to set size of
   ! bond, angle, dihedral list arrays.  Probably we should get rid of this
   ! parameter and allocate necessary size at runtime...
-  integer, parameter :: MAX_N_ATOM=30
+  integer, parameter :: MAX_N_ATOM=45
 
   integer, parameter :: MAX_FN=100, MAX_ANAME=5, MAX_MNAME=5
 
@@ -160,13 +160,13 @@ implicit none
 
   !************************* defined type to store all atom information
   type atom_data_type
-   real*8, dimension(:,:), pointer :: xyz
-   real*8, dimension(:,:), pointer :: velocity
-   real*8, dimension(:,:), pointer :: force
-   real*8, dimension(:), pointer   :: mass
-   real*8, dimension(:), pointer   :: charge
-   integer, dimension(:), pointer  :: atom_type_index  ! this is index of atom_type to look up force field parameters for this atom
-   character(MAX_ANAME),dimension(:), pointer :: aname
+   real*8, dimension(:,:), allocatable :: xyz
+   real*8, dimension(:,:), allocatable :: velocity
+   real*8, dimension(:,:), allocatable :: force
+   real*8, dimension(:), allocatable   :: mass
+   real*8, dimension(:), allocatable   :: charge
+   integer, dimension(:), allocatable  :: atom_type_index  ! this is index of atom_type to look up force field parameters for this atom
+   character(MAX_ANAME),dimension(:), allocatable :: aname
   end type atom_data_type
 
  !************************* defined type to store all molecule information
@@ -238,8 +238,8 @@ implicit none
  type verlet_list_data_type
   ! These are atom-atom based Verlet list, based on intermolecular interactions.
   ! intra-molecular atom-atom interactions are not included in these lists
-  integer,dimension(:), pointer             :: neighbor_list
-  integer,dimension(:), pointer             :: verlet_point
+  integer,dimension(:), allocatable             :: neighbor_list
+  integer,dimension(:), allocatable             :: verlet_point
   integer                                   :: verlet_atoms  ! number of atoms in verlet list
   real*8                                    :: verlet_cutoff
   real*8                                    :: safe_verlet 
@@ -247,16 +247,10 @@ implicit none
   integer                                   :: na_nslist      ! grid dimensions for neighbor searching
   integer                                   :: nb_nslist
   integer                                   :: nc_nslist  
-  real*8, dimension(:,:), pointer           :: verlet_xyz_store
-  real*8, dimension(:,:), pointer           :: verlet_displacement_store
+  real*8, dimension(:,:), allocatable           :: verlet_xyz_store
+  real*8, dimension(:,:), allocatable           :: verlet_displacement_store
  end type verlet_list_data_type
 
-
-  !************************ Target variables for verlet_list_data_type pointers
-  integer,dimension(:),allocatable, target :: neighbor_list
-  integer,dimension(:),allocatable, target :: verlet_point
-  real*8, dimension(:,:), allocatable, target :: verlet_xyz_store    ! store old positions to check for update
-  real*8, dimension(:,:), allocatable, target :: verlet_displacement_store  !store old displacements to check for update
 
 
  !********************** defined type for PME data structures
@@ -267,27 +261,19 @@ implicit none
   integer                              ::  pme_grid     ! this is the PME grid size in each dimension
   integer                              ::  spline_order ! this is the order of Beta-splines used in the PME charge interpolation
   real*8                               ::  Ewald_self                ! units: e^2/A
-  real*8,dimension(:,:,:), pointer     ::  CB, Q_grid,theta_conv_Q
-  real*8,dimension(:,:,:), pointer     ::  dQ_dr
-  integer,dimension(:,:,:), pointer    ::  dQ_dr_index
-  real*8,dimension(:,:) , pointer      ::  force_recip
+  real*8,dimension(:,:,:),allocatable  ::  CB, Q_grid,theta_conv_Q
+  real*8,dimension(:,:,:),allocatable  ::  dQ_dr
+  integer,dimension(:,:,:),allocatable ::  dQ_dr_index
+  real*8,dimension(:,:),allocatable    ::  force_recip
   TYPE(DFTI_DESCRIPTOR), POINTER       ::  dfti_desc,dfti_desc_inv  ! for MKL FFT
   real*8                               ::  E_recip
   integer                              ::  spline_grid
   integer                              ::  erfc_grid
   real*8                               ::  erfc_max        ! this is max value up to which erfc is grid
-  real*8, dimension(:), pointer        ::  B6_spline,B5_spline,B4_spline,B3_spline
-  real*8, dimension(:), pointer        ::  erfc_table
+  real*8, dimension(:),allocatable     ::  B6_spline,B5_spline,B4_spline,B3_spline
+  real*8, dimension(:),allocatable     ::  erfc_table
  end type PME_data_type
 
-
- !************************ Target variables for PME_data_type pointers
-  real*8,dimension(:,:,:),allocatable, target   ::  CB, Q_grid,theta_conv_Q
-  real*8,dimension(:,:,:), allocatable, target  ::  dQ_dr
-  integer,dimension(:,:,:), allocatable, target ::  dQ_dr_index
-  real*8,dimension(:,:) , allocatable,   target ::  force_recip  ! stores reciprocal space PME forces for MS-EVB
-  real*8,dimension(:), allocatable, target      ::  B6_spline,B5_spline,B4_spline,B3_spline
-  real*8,dimension(:), allocatable, target      ::  erfc_table
 
 
  !********************************************* global data structures for force field **************************************************************
@@ -385,7 +371,7 @@ implicit none
 
   ! fill in sizes of PME lookup tables
   PME_data%spline_grid=100000
-  PME_data%erfc_grid=100000      !1000000
+  PME_data%erfc_grid=1000000      !1000000
   PME_data%erfc_max=10d0       ! this is max value up to which erfc is grid
 
 

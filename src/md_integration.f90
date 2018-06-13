@@ -176,6 +176,8 @@ contains
        enddo
     enddo
 
+  call dissociate_single_molecule_data(single_molecule_data)
+
   end subroutine subtract_center_of_mass_momentum
 
 

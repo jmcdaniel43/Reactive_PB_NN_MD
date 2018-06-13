@@ -30,19 +30,11 @@ program main_ms_evb
   Type(verlet_list_data_type)                          :: verlet_list_data
   Type(PME_data_type)                                  :: PME_data
  
-  !**************************************** target variables for atom_data_type pointers
-   real*8, dimension(:,:), allocatable, target :: xyz
-   real*8, dimension(:,:), allocatable, target :: velocity
-   real*8, dimension(:,:), allocatable, target :: force
-   real*8, dimension(:), allocatable, target   :: mass
-   real*8, dimension(:), allocatable, target   :: charge
-   integer, dimension(:), allocatable, target  :: atom_type_index
-   character(MAX_ANAME),dimension(:),allocatable, target :: aname
-
-
   !***** Local variables
   integer :: i_step
- 
+
+  ! test
+  integer :: i_atom 
 
   !********** initialize constants in global variables
   call initialize_constants( file_io_data , verlet_list_data , PME_data )
@@ -51,7 +43,7 @@ program main_ms_evb
   call check_restart_trajectory( file_io_data )
 
   call read_simulation_parameters( file_io_data%ifile_simpmt_file_h, file_io_data%ifile_simpmt, system_data, integrator_data, verlet_list_data, PME_data )
-  call initialize_simulation( system_data, molecule_data, atom_data, file_io_data, verlet_list_data, PME_data, xyz, velocity, force, mass, charge, atom_type_index, aname )
+  call initialize_simulation( system_data, molecule_data, atom_data, file_io_data, verlet_list_data, PME_data )
 
 
   !*** open output files if this is not a continuation run.  If this is a continuation, these files will
@@ -60,11 +52,11 @@ program main_ms_evb
   Case("no")
      open( file_io_data%ofile_traj_file_h, file=file_io_data%ofile_traj, status='new' )
      open( file_io_data%ofile_log_file_h,  file=file_io_data%ofile_log, status='new' )
-     Select Case( checkpoint_velocity )
-     Case("yes")
+!     Select Case( checkpoint_velocity )
+!     Case("yes")
         ! status may be new, or append to old
-        open( file_io_data%ifile_velocity_file_h, file=file_io_data%ifile_velocity, status ='new')
-     End Select
+!        open( file_io_data%ifile_velocity_file_h, file=file_io_data%ifile_velocity, status ='new')
+!     End Select
   end Select
 
   ! assume orthorhombic box
@@ -92,6 +84,11 @@ program main_ms_evb
 
 
   call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data )
+
+  do i_atom=1, system_data%total_atoms
+     write(*,*) i_atom, atom_data%force(:,i_atom)
+  enddo
+  stop
 
 
   Select Case( restart_trajectory )

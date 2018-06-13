@@ -232,14 +232,12 @@ contains
   ! this subroutine reads a .gro file and stores the atomic names and coordinates
   ! this will allocate aname, xyz arrays, and attach pointers from atom_data structure
   !***********************************************************************
-  subroutine read_gro( file_handle, system_data, molecule_data, atom_data, aname, xyz )
+  subroutine read_gro( file_handle, system_data, molecule_data, atom_data )
    use global_variables
    integer, intent(in) :: file_handle
    type(system_data_type), intent(inout) :: system_data
    type(molecule_data_type), dimension(:), intent(inout) :: molecule_data
    type(atom_data_type) , intent(inout)  :: atom_data
-   character(*), dimension(:), allocatable, target, intent(inout):: aname
-   real*8, dimension(:,:), allocatable, target, intent(inout) :: xyz
 
    integer :: total_atoms
    integer :: i,j, i_mole, i_atom, i_mole_prev, i_start, junk, nargs, inputstatus
@@ -255,16 +253,13 @@ contains
    system_data%total_atoms = total_atoms  ! store total atoms in simulation
 
    ! Allocate arrays (Fortran column major) and setup pointers. 
-   allocate( xyz(3,total_atoms), aname(total_atoms) )
-   ! data structure pointers
-   atom_data%xyz=>xyz
-   atom_data%aname=>aname
+   allocate( atom_data%xyz(3,total_atoms), atom_data%aname(total_atoms) )
 
    i_mole_prev = 0
    i_atom = 0
    do i = 1, total_atoms
-        read( file_handle, '(I5,2A5,I5,3F8.3)' ), i_mole, mname, aname(i), junk, r_tmp(1), r_tmp(2), r_tmp(3)
-        call trim_end( aname(i) )
+        read( file_handle, '(I5,2A5,I5,3F8.3)' ), i_mole, mname, atom_data%aname(i), junk, r_tmp(1), r_tmp(2), r_tmp(3)
+        call trim_end( atom_data%aname(i) )
         if ( i_mole /= i_mole_prev ) then
              if ( i_mole_prev > 0 ) then
                 molecule_data(i_mole_prev)%n_atom = i_atom
@@ -286,7 +281,7 @@ contains
 
         ! Gro file has coordinates in nm. This code uses angstrom
         ! convert nm to angstrom...
-        xyz(:,i) = r_tmp(:) * 10d0
+        atom_data%xyz(:,i) = r_tmp(:) * 10d0
    end do
    
    ! now fill in last molecule
@@ -466,9 +461,10 @@ contains
     do i_mole = 1, n_mole
        ! set pointers for this data structure to target molecule
        call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz, atom_mass=atom_data%mass )
-
        molecule_data(i_mole)%r_com(:) = pos_com( single_molecule_data%xyz, molecule_data(i_mole)%n_atom, single_molecule_data%mass )
     end do
+
+  call dissociate_single_molecule_data(single_molecule_data)
   end subroutine update_r_com
 
 
@@ -697,7 +693,7 @@ contains
   !*********************************
   subroutine return_molecule_block( single_molecule_data, n_atom, atom_index, atom_xyz, atom_velocity, atom_force, atom_mass, atom_charge, atom_type_index, atom_name )
     use global_variables
-    type(single_molecule_data_type), intent(out) :: single_molecule_data
+    type(single_molecule_data_type), intent(inout) :: single_molecule_data
     integer, intent(in)                          :: n_atom
     integer, dimension(:), intent(in)            :: atom_index
     !**** these are input atomic data structures for which we set pointers:  Not
@@ -716,60 +712,58 @@ contains
     low_index = atom_index(1)
     high_index = atom_index(n_atom)
 
+    call dissociate_single_molecule_data(single_molecule_data)
+
     ! set pointers to molecule block of input atomic data structures that are present
     ! atomic xyz data
     if ( present(atom_xyz) ) then
-       if ( associated(single_molecule_data%xyz) ) then
-          nullify( single_molecule_data%xyz )
-       endif
        single_molecule_data%xyz=>atom_xyz(:,low_index:high_index)
     endif
     ! atomic velocity data
     if ( present(atom_velocity) ) then
-       if ( associated(single_molecule_data%velocity) ) then
-          nullify( single_molecule_data%velocity )
-       endif
        single_molecule_data%velocity=>atom_velocity(:,low_index:high_index)
     endif
     ! atomic force data
     if ( present(atom_force) ) then
-       if ( associated(single_molecule_data%force) ) then
-          nullify( single_molecule_data%force )
-       endif
        single_molecule_data%force=>atom_force(:,low_index:high_index)
     endif
     ! atomic mass data
     if ( present(atom_mass) ) then
-       if ( associated(single_molecule_data%mass) ) then
-          nullify( single_molecule_data%mass )
-       endif
        single_molecule_data%mass=>atom_mass(low_index:high_index)
     endif
     ! atomic charge data
     if ( present(atom_charge) ) then
-       if ( associated(single_molecule_data%charge) ) then
-          nullify( single_molecule_data%charge )
-       endif
        single_molecule_data%charge=>atom_charge(low_index:high_index)
     endif
     ! atom type index data
     if ( present(atom_type_index) ) then
-       if ( associated(single_molecule_data%atom_type_index) ) then
-          nullify( single_molecule_data%atom_type_index )
-       endif
        single_molecule_data%atom_type_index=>atom_type_index(low_index:high_index)
     endif
     ! atomic name data
     if ( present(atom_name) ) then
-       if ( associated(single_molecule_data%aname) ) then
-          nullify( single_molecule_data%aname )
-       endif
        single_molecule_data%aname=>atom_name(low_index:high_index)
     endif
 
 
   end subroutine return_molecule_block
 
+
+
+  subroutine dissociate_single_molecule_data(single_molecule_data)
+    use global_variables
+    type(single_molecule_data_type), intent(inout) :: single_molecule_data
+
+   ! nullify all pointers
+    nullify( single_molecule_data%xyz )
+    nullify( single_molecule_data%velocity )
+    nullify( single_molecule_data%force )
+    nullify( single_molecule_data%mass )
+    nullify( single_molecule_data%charge )
+    nullify( single_molecule_data%atom_type_index )
+    nullify( single_molecule_data%aname )
+
+
+  end subroutine dissociate_single_molecule_data
 
 
 
@@ -961,6 +955,8 @@ contains
     box = system_data%box / 10d0
     write( grofile_h, '(9F7.4)' ) box(1,1) , box(2,2) , box(3,3) , box(1,2) , box(1,3) , box(2,1) , box(2,3) , box(3,1) , box(3,2)
 
+  call dissociate_single_molecule_data(single_molecule_data)
+
   end subroutine print_gro_file
 
 
@@ -998,6 +994,8 @@ contains
        enddo
     enddo
 
+  call dissociate_single_molecule_data(single_molecule_data)
+
   end subroutine print_velocities_checkpoint
 
 
@@ -1031,6 +1029,8 @@ contains
        call make_molecule_whole( molecule_data(i_mole)%n_atom , single_molecule_data%xyz , box, xyz_to_box_transform )
 
     enddo
+
+  call dissociate_single_molecule_data(single_molecule_data)
 
   end subroutine fix_intra_molecular_shifts
 
@@ -1178,6 +1178,8 @@ contains
 
     enddo  ! end loop over molecules
 
+  call dissociate_single_molecule_data(single_molecule_data)
+
   end subroutine shift_molecules_into_box
 
 
@@ -1200,25 +1202,17 @@ contains
     real*8  :: pi
 
     ! here we are allocating array data structures in global variables
-    if ( allocated ( neighbor_list ) ) then
-       ! make sure pointer isn't attached
-       if ( associated ( verlet_list_data%neighbor_list ) ) then
-          nullify( verlet_list_data%neighbor_list )
-       endif
-       deallocate( neighbor_list )
+    if ( allocated ( verlet_list_data%neighbor_list ) ) then
+       deallocate( verlet_list_data%neighbor_list )
     endif
 
-    if ( allocated ( verlet_point ) ) then
-       ! make sure pointer isn't attached
-       if ( associated ( verlet_list_data%verlet_point ) ) then
-          nullify( verlet_list_data%verlet_point )
-       endif
-       deallocate( verlet_point )
+    if ( allocated ( verlet_list_data%verlet_point ) ) then
+       deallocate( verlet_list_data%verlet_point )
     endif
 
     ! size verlet point should be equal to the number of atoms plus 1, where the
     ! last entry signals end of list
-    allocate( verlet_point(total_atoms+1) )
+    allocate( verlet_list_data%verlet_point(total_atoms+1) )
 
     pi = constants%pi
     ! note size_verlet is integer, this will evaluate to integer...
@@ -1232,11 +1226,8 @@ contains
     ! found in global_variables
     size_verlet = floor( dble(size_verlet) *  verlet_list_data%safe_verlet )
 
-    allocate( neighbor_list(size_verlet) )
+    allocate( verlet_list_data%neighbor_list(size_verlet) )
 
-    ! set up pointers
-    verlet_list_data%verlet_point=>verlet_point
-    verlet_list_data%neighbor_list=>neighbor_list
 
   end subroutine allocate_verlet_list
 
@@ -1274,13 +1265,10 @@ contains
 
     ! if initialization
     if ( present(flag_initialize) ) then
-      if ( .not. allocated( verlet_xyz_store ) ) then
+      if ( .not. allocated( verlet_list_data%verlet_xyz_store ) ) then
          ! allocate verlet arrays to store old positions, displacements
-         allocate( verlet_xyz_store(3,total_atoms) )
-         allocate( verlet_displacement_store(3,total_atoms) )
-         ! set pointers
-         verlet_list_data%verlet_xyz_store=>verlet_xyz_store
-         verlet_list_data%verlet_displacement_store=>verlet_displacement_store
+         allocate( verlet_list_data%verlet_xyz_store(3,total_atoms) )
+         allocate( verlet_list_data%verlet_displacement_store(3,total_atoms) )
       endif      
 
       verlet_list_data%verlet_xyz_store = xyz

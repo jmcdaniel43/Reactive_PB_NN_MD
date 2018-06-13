@@ -54,16 +54,9 @@ contains
 
 
   !***********************************************************************
-  ! This calculates electrostatic energy and forces
-  ! using pme for reciprocal contribution
-  !
-  ! Global variables used but not changed
-  ! integer, parameter :: spline_order,pme_grid
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::CB
-  !
-  ! Global variables changed
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::Q_grid,theta_conv_Q
-  !
+  ! This calculates real-space, pairwise contributions to force and energy,
+  ! including non-bonded VDWs interactions and real-space portion of 
+  ! PME electrostatic energy and forces
   !***********************************************************************
   subroutine  real_space_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     use global_variables
@@ -117,6 +110,8 @@ contains
         ! here we explicitly pass energy and force data structures to be modified.  We allow this flexibility for calls within the MS-EVB subroutines in
         ! which case we want to use local data structures
         call intra_molecular_pairwise_energy_force( single_molecule_data%force, system_data%E_elec, system_data%E_vdw,  single_molecule_data ,  molecule_data(i_mole)%molecule_type_index , molecule_data(i_mole)%n_atom, PME_data )
+
+       call dissociate_single_molecule_data(single_molecule_data)
        endif
     enddo
 
@@ -564,7 +559,7 @@ contains
      real*8, dimension(:,:), intent(inout) :: f_ij
      real*8, dimension(:), intent(in)  :: dr2 , qi_qj
      real*8, dimension(:,:), intent(in) :: dr
-     real*8, dimension(:), pointer, intent(in) :: erfc_table
+     real*8, dimension(:),  intent(in) :: erfc_table
      integer, intent(in)                :: erfc_grid
      real*8, intent(in)                 :: erfc_max, alpha_sqrt, erf_factor, conv_e2A_kJmol
 

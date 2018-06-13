@@ -25,13 +25,6 @@ contains
   ! definition of forward and backward dft in paper is reversed with definition
   ! in MKL library
   !
-  ! Global variables used but not changed
-  ! integer, parameter :: spline_order,pme_grid
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::CB
-  !
-  ! Global variables changed
-  ! real*8,dimension(pme_grid,pme_grid,pme_grid)::Q_grid,theta_conv_Q
-  !
   !*************************************************
 
   subroutine pme_reciprocal_space_energy_force( system_data, atom_data, PME_data )
@@ -70,7 +63,7 @@ contains
     !************************************************************************!
 
     ! grid_Q, use scaled coordinates
-    call grid_Q(Q_grid,atom_data%charge,xyz_scale,K,PME_data%spline_order,PME_data%spline_grid)
+    call grid_Q(PME_data%Q_grid,atom_data%charge,xyz_scale,PME_data)
 
 
     !****************************timing**************************************!
@@ -82,7 +75,7 @@ contains
 
     allocate( FQ(K,K,K), q_1r(K**3), q_1d(K**3) )
 
-    q_1r=RESHAPE(Q_grid, (/K**3/) )
+    q_1r=RESHAPE(PME_data%Q_grid, (/K**3/) )
     q_1d=cmplx(q_1r,0.,16)
 
     !****************************timing**************************************!
@@ -109,8 +102,7 @@ contains
     !************************************************************************!
 
     !*multiply B*C*F(Q)
-    ! FQ=FQ*cmplx(CB,0.,16)
-    FQ=FQ*CB
+    FQ=FQ*PME_data%CB
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -134,13 +126,13 @@ contains
     !************************************************************************!
 
     FQ=RESHAPE(q_1d, (/K,K,K/) )
-    theta_conv_Q=dble(FQ)
+    PME_data%theta_conv_Q=dble(FQ)
 
     deallocate( FQ, q_1r, q_1d )
 
 
     !****** PME reciprocal space energy
-    pme_Erecip=.5D0*sum((Q_grid*theta_conv_Q))*constants%conv_e2A_kJmol   
+    pme_Erecip=.5D0*sum((PME_data%Q_grid*PME_data%theta_conv_Q))*constants%conv_e2A_kJmol   
     system_data%E_elec =  system_data%E_elec + pme_Erecip
 
 
@@ -172,10 +164,12 @@ contains
     PME_data%force_recip=0d0
 
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,theta_conv_Q,PME_data, xyz_scale, atom_data, K, system_data,kk,split_do,constants) 
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,PME_data, xyz_scale, atom_data, K, system_data,kk,split_do,constants) 
     !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,total_atoms
-       call derivative_grid_Q(force, theta_conv_Q, atom_data%charge, xyz_scale, i_atom,K,PME_data%spline_order,PME_data%spline_grid,kk,constants%conv_e2A_kJmol)
+       ! the reason we pass theta_conv_Q separately is we want the flexibility
+       ! to input a temporary array for this in the ms_evb code
+       call derivative_grid_Q(force, PME_data%theta_conv_Q, atom_data%charge, xyz_scale, i_atom, PME_data,kk, constants%conv_e2A_kJmol )
        PME_data%force_recip(:,i_atom)=PME_data%force_recip(:,i_atom)+force(:)
     enddo
     !$OMP END DO NOWAIT
@@ -202,17 +196,20 @@ contains
   !*****************************************************************
   ! This subroutine interpolates charges onto Q grid to be used in pme reciprocal space routines
   !*****************************************************************
-  subroutine grid_Q(Q,chg,xyz,K,spline_order,spline_grid)
+  subroutine grid_Q(Q,chg,xyz, PME_data)
     use global_variables
     use omp_lib
     real*8, intent(in), dimension(:) :: chg
     real*8, intent(in), dimension(:,:) :: xyz
-    integer,intent(in)::K,spline_order, spline_grid
+    type(PME_data_type), intent(in)    :: PME_data
     real*8,dimension(:,:,:),intent(out)::Q
     integer::i_atom,tot_atoms, k1,k2,k3,n1,n2,n3,nearpt(3),splindex(3)
     real*8::sum
     real*8,dimension(3)::u,arg
     integer :: split_do
+
+    ! define local variables for convenience
+    integer :: K,spline_order, spline_grid
 
     Q=0D0
     tot_atoms=size(xyz(1,:))
@@ -227,7 +224,11 @@ contains
 
     ! parameter spline_grid undeclared, but ok
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,B6_spline,B4_spline,K,spline_order,spline_grid) REDUCTION(+:Q)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,PME_data) REDUCTION(+:Q)
+       ! local variables for convenience
+       K=PME_data%pme_grid
+       spline_order=PME_data%spline_order
+       spline_grid=PME_data%spline_grid
     !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,tot_atoms
        u=xyz(:,i_atom)
@@ -262,9 +263,9 @@ contains
 
                 ! note 0<arg<n , so arg should always be within bounds of gridded spline
                 if(spline_order .eq.6) then
-                   sum=chg(i_atom)*B6_spline(splindex(1))*B6_spline(splindex(2))*B6_spline(splindex(3))
+                   sum=chg(i_atom)*PME_data%B6_spline(splindex(1))*PME_data%B6_spline(splindex(2))*PME_data%B6_spline(splindex(3))
                 else
-                   sum=chg(i_atom)*B4_spline(splindex(1))*B4_spline(splindex(2))*B4_spline(splindex(3))   
+                   sum=chg(i_atom)*PME_data%B4_spline(splindex(1))*PME_data%B4_spline(splindex(2))*PME_data%B4_spline(splindex(3))   
                 endif
 
                 Q(n1+1,n2+1,n3+1)=Q(n1+1,n2+1,n3+1)+sum
@@ -290,18 +291,26 @@ contains
   ! the redundant comments
   !
   !*********************************
-  subroutine modify_Q_grid( Q , chg, xyz, n_atom, K, spline_order, spline_grid, operation)
+  subroutine modify_Q_grid( Q , chg, xyz, n_atom, PME_data, operation)
     use global_variables
     integer, intent(in)              :: n_atom
     real*8, intent(in), dimension(:) :: chg
     real*8, intent(in), dimension(:,:) :: xyz
-    integer,intent(in)::K, spline_order, spline_grid
+    type(PME_data_type) , intent(in)   :: PME_data
     real*8,dimension(:,:,:),intent(inout)::Q
     integer, intent(in) :: operation
     integer::j,k1,k2,k3,n1,n2,n3,nearpt(3),splindex(3)
     real*8::sum
     real*8,dimension(3)::u,arg
     real*8 :: small=1D-6
+    ! define local variables for convenience
+    integer :: K,spline_order, spline_grid
+
+    ! local variables for convenience
+    K=PME_data%pme_grid
+    spline_order=PME_data%spline_order
+    spline_grid=PME_data%spline_grid
+
 
     do j=1,n_atom
        if ( abs(chg(j)) > small ) then
@@ -329,9 +338,9 @@ contains
                    sum=0d0
                    splindex = ceiling(arg/6.D0*dble(spline_grid))
                    if(spline_order .eq.6) then
-                      sum=chg(j)*B6_spline(splindex(1))*B6_spline(splindex(2))*B6_spline(splindex(3))
+                      sum=chg(j)*PME_data%B6_spline(splindex(1))*PME_data%B6_spline(splindex(2))*PME_data%B6_spline(splindex(3))
                    else
-                      sum=chg(j)*B4_spline(splindex(1))*B4_spline(splindex(2))*B4_spline(splindex(3))      
+                      sum=chg(j)*PME_data%B4_spline(splindex(1))*PME_data%B4_spline(splindex(2))*PME_data%B4_spline(splindex(3))      
                    endif
                    if ( operation < 0 ) then
                       Q(n1+1,n2+1,n3+1)=Q(n1+1,n2+1,n3+1)-sum
@@ -356,25 +365,32 @@ contains
   !
   ! notice that this is being called in a parallel section of code
   !**************************************************
-  subroutine derivative_grid_Q(force,FQ,chg,xyz,i_atom,K,spline_order, spline_grid,kk,conv_e2A_kJmol, flag_update)
+  subroutine derivative_grid_Q(force,FQ,chg,xyz,i_atom, PME_data, kk, conv_e2A_kJmol, flag_update)
     use global_variables
-    integer,intent(in)::K,spline_order, spline_grid
     real*8,dimension(3),intent(out)::force
     real*8,dimension(:,:,:),intent(in)::FQ
+    type(PME_data_type), intent(inout)   :: PME_data
     integer, intent(in) :: i_atom
     real*8, intent(in), dimension(:) :: chg
     real*8,intent(in),dimension(3,3)::kk
     real*8, intent(in), dimension(:,:) :: xyz
-    real*8, intent(in)             :: conv_e2A_kJmol
+    real*8, intent(in)                 :: conv_e2A_kJmol
     integer, intent(in), optional :: flag_update
 
     integer::i,j,k1,k2,k3,n1,n2,n3,nearpt(3)
     integer::g1n(3),g1nmin(3),g1(3),g2(3)
     real*8::fac(3),chg_i
     real*8,dimension(3)::u,arg1,arg2,force_temp
+    ! temporary local variables
+    integer :: K, spline_order, spline_grid
 
     integer :: count
     count=1
+
+    ! local variables
+    K=PME_data%pme_grid
+    spline_order=PME_data%spline_order
+    spline_grid=PME_data%spline_grid
 
     force=0.D0
     chg_i=chg(i_atom)
@@ -424,50 +440,50 @@ contains
              g1=g1n;g1(1)=g1nmin(1);
              if(arg1(1)<real(spline_order-1)) then 
                 if(spline_order.eq.6) then
-                   fac(1)=chg_i*(B5_spline(g1(1))*B6_spline(g1(2))*B6_spline(g1(3)))
+                   fac(1)=chg_i*(PME_data%B5_spline(g1(1))*PME_data%B6_spline(g1(2))*PME_data%B6_spline(g1(3)))
                 else
-                   fac(1)=chg_i*(B3_spline(g1(1))*B4_spline(g1(2))*B4_spline(g1(3)))  
+                   fac(1)=chg_i*(PME_data%B3_spline(g1(1))*PME_data%B4_spline(g1(2))*PME_data%B4_spline(g1(3)))  
                 endif
              endif
              ! at this point, arg1(1) < n , so arg2(1) < n - 1 , so don't check for that
              !if( (arg2(1)<real(n-1) ) .and.(0.<arg2(1)) ) then 
              if(0.<arg2(1)) then
                 if(spline_order.eq.6) then
-                   fac(1)=fac(1)+chg_i*(-B5_spline(g2(1))*B6_spline(g1(2))*B6_spline(g1(3)))
+                   fac(1)=fac(1)+chg_i*(-PME_data%B5_spline(g2(1))*PME_data%B6_spline(g1(2))*PME_data%B6_spline(g1(3)))
                 else
-                   fac(1)=fac(1)+chg_i*(-B3_spline(g2(1))*B4_spline(g1(2))*B4_spline(g1(3)))  
+                   fac(1)=fac(1)+chg_i*(-PME_data%B3_spline(g2(1))*PME_data%B4_spline(g1(2))*PME_data%B4_spline(g1(3)))  
                 endif
              endif
 !!!!!!force in y direction
              g1=g1n;g1(2)=g1nmin(2)
              if ( arg1(2)<real(spline_order-1) ) then 
                 if(spline_order.eq.6) then
-                   fac(2)=chg_i*(B5_spline(g1(2))*B6_spline(g1(1))*B6_spline(g1(3)))
+                   fac(2)=chg_i*(PME_data%B5_spline(g1(2))*PME_data%B6_spline(g1(1))*PME_data%B6_spline(g1(3)))
                 else
-                   fac(2)=chg_i*(B3_spline(g1(2))*B4_spline(g1(1))*B4_spline(g1(3)))  
+                   fac(2)=chg_i*(PME_data%B3_spline(g1(2))*PME_data%B4_spline(g1(1))*PME_data%B4_spline(g1(3)))  
                 endif
              endif
              if (0.<arg2(2)) then 
                 if(spline_order.eq.6) then
-                   fac(2)=fac(2)+chg_i*(-B5_spline(g2(2))*B6_spline(g1(1))*B6_spline(g1(3)))
+                   fac(2)=fac(2)+chg_i*(-PME_data%B5_spline(g2(2))*PME_data%B6_spline(g1(1))*PME_data%B6_spline(g1(3)))
                 else
-                   fac(2)=fac(2)+chg_i*(-B3_spline(g2(2))*B4_spline(g1(1))*B4_spline(g1(3)))  
+                   fac(2)=fac(2)+chg_i*(-PME_data%B3_spline(g2(2))*PME_data%B4_spline(g1(1))*PME_data%B4_spline(g1(3)))  
                 endif
              endif
 !!!!!force in z direction
              g1=g1n;g1(3)=g1nmin(3)
              if(arg1(3)<real(spline_order-1)) then 
                 if(spline_order.eq.6) then
-                   fac(3)=chg_i*(B5_spline(g1(3))*B6_spline(g1(1))*B6_spline(g1(2)))
+                   fac(3)=chg_i*(PME_data%B5_spline(g1(3))*PME_data%B6_spline(g1(1))*PME_data%B6_spline(g1(2)))
                 else
-                   fac(3)=chg_i*(B3_spline(g1(3))*B4_spline(g1(1))*B4_spline(g1(2)))  
+                   fac(3)=chg_i*(PME_data%B3_spline(g1(3))*PME_data%B4_spline(g1(1))*PME_data%B4_spline(g1(2)))  
                 endif
              endif
              if (0.<arg2(3))  then 
                 if(spline_order.eq.6) then
-                   fac(3)=fac(3)+chg_i*(-B5_spline(g2(3))*B6_spline(g1(1))*B6_spline(g1(2)))
+                   fac(3)=fac(3)+chg_i*(-PME_data%B5_spline(g2(3))*PME_data%B6_spline(g1(1))*PME_data%B6_spline(g1(2)))
                 else
-                   fac(3)=fac(3)+chg_i*(-B3_spline(g2(3))*B4_spline(g1(1))*B4_spline(g1(2)))  
+                   fac(3)=fac(3)+chg_i*(-PME_data%B3_spline(g2(3))*PME_data%B4_spline(g1(1))*PME_data%B4_spline(g1(2)))  
                 endif
              endif
 
@@ -477,10 +493,10 @@ contains
              if ( .not. present(flag_update) ) then
                 Select Case(ms_evb_simulation)
                 Case("yes")
-                   dQ_dr(:,count,i_atom) = fac(:)
-                   dQ_dr_index(1,count,i_atom) =n1+1
-                   dQ_dr_index(2,count,i_atom) =n2+1
-                   dQ_dr_index(3,count,i_atom) =n3+1
+                   PME_data%dQ_dr(:,count,i_atom) = fac(:)
+                   PME_data%dQ_dr_index(1,count,i_atom) =n1+1
+                   PME_data%dQ_dr_index(2,count,i_atom) =n2+1
+                   PME_data%dQ_dr_index(3,count,i_atom) =n3+1
                    count = count + 1
                 End Select
              endif
