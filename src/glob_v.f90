@@ -33,11 +33,6 @@ implicit none
   ! force field parameter arrays
   integer, parameter ::  MAX_N_MOLE_TYPE=10, MAX_N_ATOM_TYPE=20
 
-  ! this is maximum number of atoms per molecule, which is used to set size of
-  ! bond, angle, dihedral list arrays.  Probably we should get rid of this
-  ! parameter and allocate necessary size at runtime...
-  integer, parameter :: MAX_N_ATOM=45
-
   integer, parameter :: MAX_FN=100, MAX_ANAME=5, MAX_MNAME=5
 
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
@@ -111,12 +106,6 @@ implicit none
   ! this array stores index of conjugate acid/base moleculetype
   integer, dimension(MAX_N_MOLE_TYPE)  :: evb_conjugate_pairs
   ! 
-  ! these arrays store reactive atom indices. "1" indicates reactive proton (or basic
-  ! atom).  Note that acids and bases can have both reactive protons and reactive basic atoms, so
-  ! in general we need to include both acids and bases in both these data structures
-  integer, dimension(MAX_N_MOLE_TYPE,MAX_N_ATOM)  :: evb_reactive_protons
-  integer, dimension(MAX_N_MOLE_TYPE,MAX_N_ATOM)  :: evb_reactive_basic_atoms
-  !
   ! this array stores conjugate atoms of conjugate acid/base.  For each atomtype, index of
   ! conjugate atomtype is stored
   integer, dimension(MAX_N_ATOM_TYPE) :: evb_conjugate_atom_index
@@ -276,7 +265,53 @@ implicit none
 
 
 
- !********************************************* global data structures for force field **************************************************************
+ !*********************** defined type to store bond pair indices
+ type bond_list_type
+  integer                              ::  i_atom, j_atom 
+ end type bond_list_type
+
+!*********************** defined type to store angle atom indices
+ type angle_list_type
+  integer                              ::  i_atom, j_atom, k_atom
+ end type angle_list_type
+
+!*********************** defined type to store dihedral atom indices
+ type dihedral_list_type
+  integer                              ::  i_atom, j_atom, k_atom, l_atom
+ end type dihedral_list_type
+
+
+  ! exclusions for intra-molecular interactions
+  ! we could easily define molecule-type specific number of exclusions, if we
+  ! need to do this, put n_excl in molecule_type_data data structure and define
+  ! for each molecule before setting molecule type exclusions
+  integer, parameter  :: n_excl = 2  ! this is the number of bonds away to exclude intra-molecular interactions
+
+ !*********************** defined type to store atom and connectivity info for each molecule type
+ type molecule_type_data_type
+   integer :: n_atom                  ! number of atoms in this molecule type
+   character(MAX_MNAME) :: mname
+   integer, dimension(:), allocatable  :: atom_type_index  ! this is index of atom_type to look up force field parameters for this atom
+   type(bond_list_type), dimension(:), allocatable :: bond_list
+   type(angle_list_type), dimension(:), allocatable :: angle_list
+   type(dihedral_list_type), dimension(:), allocatable :: dihedral_list
+   integer, dimension(:,:), allocatable  :: pair_exclusions  ! list of all intra-molecular exclusions, generated based on the setting of n_excl.  Excluded atom pairs are marked with a "1", non-exclusions with a "0", and special 1-4 interactions labeled with a "2"
+   ! these arrays are for MS-EVB, storing reactive atom indices. "1" indicates reactive proton (or basic atom).  Note that acids and bases can have both reactive protons and reactive basic atoms
+   integer, dimension(:),allocatable  :: evb_reactive_protons
+   integer, dimension(:),allocatable  :: evb_reactive_basic_atoms
+ end type molecule_type_data_type
+
+
+ ! data structure of molecule types, we don't make this allocatable as it's
+ ! impractical to figure out the number of unique molecule types without having a
+ ! data structure to store molecule_type_information first
+ ! also, for MS-EVB simulation, we could have more molecule types than are in
+ ! the .gro input file, as we need types for conjugate acids/bases
+ type(molecule_type_data_type), dimension(MAX_N_MOLE_TYPE) :: molecule_type_data
+
+
+
+ !********************************************* global atomtype data structures for force field **************************************************************
   integer:: n_atom_type, n_molecule_type
   character(MAX_ANAME), dimension(MAX_N_ATOM_TYPE) :: atype_name
   real*8, dimension(MAX_N_ATOM_TYPE) :: atype_chg
@@ -284,14 +319,11 @@ implicit none
   real*8, dimension(MAX_N_ATOM_TYPE) :: atype_mass    
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_vdw_parameter        ! for SAPT-FF, store A,B,C6,C8,C10,C12, for LJ, store epsilon,sigma
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_vdw_parameter_14        ! this is same as atype_vdw_parameter array, but stores special values for 1-4 interactions as used in GROMOS-45a3 force field
-  integer, dimension(MAX_N_MOLE_TYPE,MAX_N_ATOM) :: molecule_type      ! this array contains indices for all types of solute molecules (not framework) end is marked with MAX_N_ATOM+1
-  character(MAX_MNAME), dimension(MAX_N_MOLE_TYPE) :: molecule_type_name
   integer                 :: lj_bkghm                ! =1 for bkghm, =2 for lj
   character(10)            :: lj_comb_rule            ! for lj, set to "opls" or "standard"== Lorentz-Berthelot, for bkghm, set to "standard" or "ZIFFF"
  ! if lj_bkghm is set to 3, meaning we are using hybrid lj/bkghm force field, we need a 2nd combination rule.  The first "lj_comb_rule" will then be used for the bkghm force field for solute-framework interactions, and "lj_comb_rule2" will be used for the lj force field for solute-solute interactions
   character(10)            :: lj_comb_rule2            ! this will only be used if lj_bkghm=3
   integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: lj_bkghm_index ! this  maps which atom-atom types use a lj interaction, and which use a buckingham interaction, which is really only necessary for lj_bkghm=3, but is used always
-
 ! intra-molecular bond, angle and dihedral data structures
   integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE)  :: atype_bond_type  ! stores type of bond, 1=harmonic, 2=GROMOS-96, 3=Morse
   real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,3) :: atype_bond_parameter ! stores intra-molecular bond parameters for pair of atomtypes. For harmonic bond, first parameter is b0 (angstroms), second is kb (Kj/mol)/angstrom^2 , for Morse potential, first parameter is D (kJ/mol) , second is beta(angstroms^-1), third is b0(angstroms)
@@ -299,14 +331,6 @@ implicit none
   real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,2) :: atype_angle_parameter ! stores intra-molecular angle parameters for set of three atomtypes.  First parameter is th0 (degrees), second is cth (Kj/mol)/ degree^2
   integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE)  :: atype_dihedral_type ! stores type of dihedral, 1=proper, 2=improper
   real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,3) :: atype_dihedral_parameter ! stores intra-molecular dihedral parameters, for improper:first parameter is xi0, second is kxi ; for proper, first is phi0, second is kphi, third is multiplicity
-  integer,dimension(MAX_N_MOLE_TYPE, MAX_N_ATOM, MAX_N_ATOM)   :: molecule_bond_list  ! this stores the bond list for each molecule type.  If there is a bond between the 2nd and 3rd atoms in the 1st molecule type, then the entry (1,2,3)=1, otherwise (1,2,3)=0
-  integer,dimension(MAX_N_MOLE_TYPE, MAX_N_ATOM, MAX_N_ATOM, MAX_N_ATOM)   :: molecule_angle_list  ! this stores the angle list for each molecule type.  data storage is same format as molecule_bond_list
-  integer,dimension(MAX_N_MOLE_TYPE, MAX_N_ATOM, MAX_N_ATOM, MAX_N_ATOM, MAX_N_ATOM)   :: molecule_dihedral_list  ! this stores the dihedral list for each molecule type.  data storage is same format as molecule_bond_list
-  integer,dimension(MAX_N_MOLE_TYPE) :: molecule_dihedral_flag  ! =1, if molecule has any dihedrals, =0 otherwise.  This is used to avoid searching over atoms in molecules (water) that don't have any dihedrals
-
-  ! exclusions for intra-molecular interactions
-  integer, parameter  :: n_excl = 2  ! this is the number of bonds away to exclude intra-molecular interactions
-  integer, dimension(MAX_N_MOLE_TYPE, MAX_N_ATOM, MAX_N_ATOM) :: molecule_exclusions ! this has a list of all atom-atom exlusions for each molecule type.  This is generated based on the setting of n_excl.  Excluded atom pairs are marked with a "1", non-exclusions with a "0".  In addition, this array has a special labeling for 1-4 interactions, which are labeled with a "2"
 
 !*******************************************************************************************************************************************
 

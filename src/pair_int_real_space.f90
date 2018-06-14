@@ -396,7 +396,7 @@ contains
 
        ! get number of exclusions, non-exclusions between this and rest of atoms in molecule
        do j_atom = i_atom + 1, n_atom
-          if ( molecule_exclusions( i_mole_type, i_atom, j_atom ) /= 1 ) then
+          if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom, j_atom ) /= 1 ) then
              n_nonexcluded = n_nonexcluded + 1  ! not excluded
           else
              n_excluded = n_excluded + 1    ! excluded
@@ -417,7 +417,7 @@ contains
        index_nonexcluded=1
        do j_atom = i_atom + 1, n_atom
           j_type = single_molecule_data%atom_type_index(j_atom)
-          if ( molecule_exclusions( i_mole_type, i_atom, j_atom ) /= 1 ) then  
+          if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom, j_atom ) /= 1 ) then  
               ! nonexcluded            
               pairwise_neighbor_data_nonexcluded%atom_index(index_nonexcluded) = j_atom
               pairwise_neighbor_data_nonexcluded%dr(:,index_nonexcluded) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
@@ -427,7 +427,7 @@ contains
               ! and C6, even though they were read in as epsilon and sigma
               ! if this is a 1-4 interaction, take parameters from 1-4
               ! interaction parameter array
-              if ( molecule_exclusions( i_mole_type, i_atom , j_atom ) == 2 ) then
+              if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom , j_atom ) == 2 ) then
                  pairwise_neighbor_data_nonexcluded%atype_vdw_parameter(:,index_nonexcluded) = atype_vdw_parameter_14(i_type,j_type,:)
               else
                  pairwise_neighbor_data_nonexcluded%atype_vdw_parameter(:,index_nonexcluded) = atype_vdw_parameter(i_type,j_type,:)

@@ -35,7 +35,7 @@ contains
     ! note that not all molecules have dihedrals, and those that do are probably
     ! in continuous indices, so don't split loop into big chunks here
 
-!    call OMP_SET_NUM_THREADS(n_threads)
+    !    call OMP_SET_NUM_THREADS(n_threads)
     !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:E_bond, E_angle, E_dihedral)
     !$OMP DO SCHEDULE(DYNAMIC,1)
     do i_mole = 1, system_data%n_mole
@@ -47,13 +47,13 @@ contains
        call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_xyz=atom_data%xyz, atom_force=atom_data%force, atom_type_index=atom_data%atom_type_index )
 
        ! bond energy, force for molecule
-       call intra_molecular_bond_energy_force( E_bond_local, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
+       call intra_molecular_bond_energy_force( E_bond_local, single_molecule_data, i_mole_type )
 
        ! angle energy, force for molecule
-       call intra_molecular_angle_energy_force( E_angle_local, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom )
+       call intra_molecular_angle_energy_force( E_angle_local, single_molecule_data, i_mole_type )
 
        ! dihedral energy, force for molecule
-       call intra_molecular_dihedral_energy_force( E_dihedral_local, single_molecule_data, i_mole_type, molecule_data(i_mole)%n_atom ) 
+       call intra_molecular_dihedral_energy_force( E_dihedral_local, single_molecule_data, i_mole_type ) 
 
        E_bond     =   E_bond + E_bond_local
        E_angle    =   E_angle + E_angle_local
@@ -81,37 +81,36 @@ contains
   ! as is convention in this program, molecules
   ! are not split up over periodic boundaries
   !*************************************
-  subroutine intra_molecular_bond_energy_force( E_bond, single_molecule_data , i_mole_type , n_atom ) 
+  subroutine intra_molecular_bond_energy_force( E_bond, single_molecule_data , i_mole_type ) 
     use global_variables
     real*8, intent(out) :: E_bond
     type(single_molecule_data_type), intent(inout):: single_molecule_data
-    integer, intent(in) :: i_mole_type, n_atom
+    integer, intent(in) :: i_mole_type
 
-    integer :: i_atom_type, j_atom_type, i_atom, j_atom
+    integer :: i_atom_type, j_atom_type, i_atom, j_atom, i_bond
     real*8, dimension(3) :: r_ij, force_ij
     real*8 :: r_mag, E_bond_ij
 
     E_bond = 0d0
     ! loop over bond list for this molecule
-    do i_atom=1,n_atom-1
-       do j_atom=i_atom+1,n_atom
-          if ( molecule_bond_list(i_mole_type,i_atom,j_atom) == 1 ) then
-             ! bond between these two atoms
-             i_atom_type = single_molecule_data%atom_type_index(i_atom)
-             j_atom_type = single_molecule_data%atom_type_index(j_atom)
+    do i_bond=1, size(molecule_type_data(i_mole_type)%bond_list)
+       i_atom = molecule_type_data(i_mole_type)%bond_list(i_bond)%i_atom
+       j_atom = molecule_type_data(i_mole_type)%bond_list(i_bond)%j_atom
 
-             r_ij(:) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
-             r_mag = dsqrt( dot_product( r_ij , r_ij ) )
+       ! bond between these two atoms
+       i_atom_type = single_molecule_data%atom_type_index(i_atom)
+       j_atom_type = single_molecule_data%atom_type_index(j_atom)
 
-             call pairwise_bond_energy_force( E_bond_ij, force_ij, i_atom_type, j_atom_type, r_ij , r_mag )
+       r_ij(:) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
+       r_mag = dsqrt( dot_product( r_ij , r_ij ) )
 
-             E_bond = E_bond + E_bond_ij 
+       call pairwise_bond_energy_force( E_bond_ij, force_ij, i_atom_type, j_atom_type, r_ij , r_mag )
 
-             single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) + force_ij(:)
-             single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) - force_ij(:)
+       E_bond = E_bond + E_bond_ij 
 
-          end if
-       enddo
+       single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) + force_ij(:)
+       single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) - force_ij(:)
+
     enddo
 
   end subroutine intra_molecular_bond_energy_force
@@ -177,39 +176,37 @@ contains
   ! as is convention in this program, molecules
   ! are not split up over periodic boundaries
   !*************************************
-  subroutine intra_molecular_angle_energy_force( E_angle, single_molecule_data, i_mole_type, n_atom ) 
+  subroutine intra_molecular_angle_energy_force( E_angle, single_molecule_data, i_mole_type ) 
     use global_variables
     real*8, intent(out) :: E_angle
     type(single_molecule_data_type), intent(inout) :: single_molecule_data
-    integer, intent(in) :: i_mole_type, n_atom
+    integer, intent(in) :: i_mole_type
 
-    integer :: i_atom_type, j_atom_type, k_atom_type, i_atom, j_atom, k_atom
+    integer :: i_atom_type, j_atom_type, k_atom_type, i_atom, j_atom, k_atom, i_angle
     real*8, dimension(3) :: r_ij, r_kj, f_ij , f_kj
     real*8 :: E_angle_ijk
 
     E_angle=0d0
 
     ! loop over angle list for this molecule
-    do i_atom=1,n_atom                    ! outer atom
-       do k_atom=i_atom+1,n_atom          ! outer atom index > i_atom
-          do j_atom=1,n_atom              ! middle atom, loop over all indices
-             if ( molecule_angle_list(i_mole_type,i_atom,j_atom,k_atom) == 1 ) then
-                i_atom_type = single_molecule_data%atom_type_index(i_atom)
-                j_atom_type = single_molecule_data%atom_type_index(j_atom)
-                k_atom_type = single_molecule_data%atom_type_index(k_atom)
+    do i_angle=1, size(molecule_type_data(i_mole_type)%angle_list)
+       i_atom = molecule_type_data(i_mole_type)%angle_list(i_angle)%i_atom
+       j_atom = molecule_type_data(i_mole_type)%angle_list(i_angle)%j_atom
+       k_atom = molecule_type_data(i_mole_type)%angle_list(i_angle)%k_atom
 
-                r_ij(:) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
-                r_kj(:) = single_molecule_data%xyz(:,k_atom) - single_molecule_data%xyz(:,j_atom)
+       i_atom_type = single_molecule_data%atom_type_index(i_atom)
+       j_atom_type = single_molecule_data%atom_type_index(j_atom)
+       k_atom_type = single_molecule_data%atom_type_index(k_atom)
 
-                call trimer_angle_energy_force( E_angle_ijk, f_ij, f_kj, i_atom_type, j_atom_type, k_atom_type , r_ij, r_kj)
+       r_ij(:) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
+       r_kj(:) = single_molecule_data%xyz(:,k_atom) - single_molecule_data%xyz(:,j_atom)
 
-                E_angle = E_angle + E_angle_ijk
-                single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) + f_ij(:)
-                single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:)
-                single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom)  - f_ij(:) - f_kj(:)
-             end if
-          end do
-       end do
+       call trimer_angle_energy_force( E_angle_ijk, f_ij, f_kj, i_atom_type, j_atom_type, k_atom_type , r_ij, r_kj)
+
+       E_angle = E_angle + E_angle_ijk
+       single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) + f_ij(:)
+       single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:)
+       single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom)  - f_ij(:) - f_kj(:)
     end do
 
   end subroutine intra_molecular_angle_energy_force
@@ -296,59 +293,50 @@ contains
   ! as is convention in this program, molecules
   ! are not split up over periodic boundaries
   !*************************************
-  subroutine intra_molecular_dihedral_energy_force( E_dihedral, single_molecule_data, i_mole_type, n_atom )
+  subroutine intra_molecular_dihedral_energy_force( E_dihedral, single_molecule_data, i_mole_type )
     use global_variables
     real*8, intent(out) :: E_dihedral
     type(single_molecule_data_type), intent(inout) :: single_molecule_data
-    integer, intent(in) :: i_mole_type, n_atom
-    
-    integer :: i_atom_type, j_atom_type, k_atom_type, l_atom_type, i_atom, j_atom, k_atom, l_atom
+    integer, intent(in) :: i_mole_type
+
+    integer :: i_atom_type, j_atom_type, k_atom_type, l_atom_type, i_atom, j_atom, k_atom, l_atom, i_dihedral
     real*8,dimension(3) :: r_ji, r_kj, r_lk, f_ji, f_kj, f_lk
     real*8 :: E_dihedral_ijkl
 
 
     E_dihedral=0d0
-    ! see if this molecule has any dihedrals
-    if ( molecule_dihedral_flag( i_mole_type ) == 1 ) then
-       ! loop over dihedral list for this molecule
-       do i_atom=1,n_atom        ! outer atom                 
-          do l_atom = i_atom+1, n_atom  ! outer atom, index greater than i_atom
-             ! note we're not double counting angle terms here, even though j_atom and k_atom are
-             ! looping over the same atoms, because the order matters for the dihedral potential
-             do j_atom=1,n_atom         ! inner atom
-                do k_atom=1,n_atom      ! inner atom
-
-                   if ( molecule_dihedral_list(i_mole_type,i_atom,j_atom,k_atom,l_atom) == 1 ) then
-
-                      i_atom_type = single_molecule_data%atom_type_index(i_atom)
-                      j_atom_type = single_molecule_data%atom_type_index(j_atom)
-                      k_atom_type = single_molecule_data%atom_type_index(k_atom)
-                      l_atom_type = single_molecule_data%atom_type_index(l_atom)
-
-                      r_ji(:) = single_molecule_data%xyz(:,j_atom) - single_molecule_data%xyz(:,i_atom)
-                      r_kj(:) = single_molecule_data%xyz(:,k_atom) - single_molecule_data%xyz(:,j_atom)
-                      r_lk(:) = single_molecule_data%xyz(:,l_atom) - single_molecule_data%xyz(:,k_atom)
-
-                      call quartet_dihedral_energy_force( E_dihedral_ijkl, f_ji, f_kj, f_lk, i_atom_type, j_atom_type, k_atom_type , l_atom_type, r_ji, r_kj, r_lk )
-
-                      E_dihedral = E_dihedral + E_dihedral_ijkl
+    ! loop over dihedral list for this molecule
+    do i_dihedral=1,size(molecule_type_data(i_mole_type)%dihedral_list)
+       i_atom = molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%i_atom
+       j_atom = molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%j_atom
+       k_atom = molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%k_atom
+       l_atom = molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%l_atom
 
 
-                      single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) - f_ji(:)
-                      single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) + f_ji(:) - f_kj(:)
-                      single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:) - f_lk(:)
-                      single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) + f_lk(:)
+       i_atom_type = single_molecule_data%atom_type_index(i_atom)
+       j_atom_type = single_molecule_data%atom_type_index(j_atom)
+       k_atom_type = single_molecule_data%atom_type_index(k_atom)
+       l_atom_type = single_molecule_data%atom_type_index(l_atom)
 
-                   endif
+       r_ji(:) = single_molecule_data%xyz(:,j_atom) - single_molecule_data%xyz(:,i_atom)
+       r_kj(:) = single_molecule_data%xyz(:,k_atom) - single_molecule_data%xyz(:,j_atom)
+       r_lk(:) = single_molecule_data%xyz(:,l_atom) - single_molecule_data%xyz(:,k_atom)
 
-                enddo
-             enddo
-          enddo
-       enddo
-    end if
+       call quartet_dihedral_energy_force( E_dihedral_ijkl, f_ji, f_kj, f_lk, i_atom_type, j_atom_type, k_atom_type , l_atom_type, r_ji, r_kj, r_lk )
+
+       E_dihedral = E_dihedral + E_dihedral_ijkl
+
+
+       single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) - f_ji(:)
+       single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) + f_ji(:) - f_kj(:)
+       single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:) - f_lk(:)
+       single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) + f_lk(:)
+
+    enddo
 
 
   end subroutine intra_molecular_dihedral_energy_force
+
 
 
   !**********************************
@@ -538,7 +526,7 @@ contains
 
   !*****************************************
   ! This subroutine generates an exclusions list
-  ! "molecule_exclusions for every molecule type
+  ! "pair_exclusions" for every molecule type
   ! for intra-molecular non-bonded interactions
   ! based on the setting of n_excl global variable parameter
   ! atom pairs connected by n_excl bonds or less will be
@@ -558,8 +546,9 @@ contains
   !*****************************************
   subroutine generate_intramolecular_exclusions
     use global_variables
-    integer :: i_molecule_type, i_atom, n_bonds, max_search
+    integer :: i_molecule_type, i_bond, i_atom, j_atom, n_bonds, max_search
     integer, dimension(:), allocatable :: bond_trajectory
+    integer, dimension(:,:), allocatable :: bond_lookup_table
 
     write(*,*) ""
     write(*,*) "automatically generating exclusions for intra-molecular non-bonded"
@@ -571,23 +560,31 @@ contains
 
     ! this array keeps a list of all atoms along the bonding trajectory, so that we don't loop back over an atom
     allocate( bond_trajectory( max_search+1 ) )
-    bond_trajectory=0
 
     do i_molecule_type=1, n_molecule_type
-       do i_atom=1, MAX_N_ATOM
-          ! fill in self-exclusion
-          molecule_exclusions(i_molecule_type, i_atom, i_atom) = 1
+       bond_trajectory=0
 
-          if ( molecule_type( i_molecule_type, i_atom ) == ( MAX_N_ATOM_TYPE + 1 ) ) then
-             ! end of atoms in molecule
-             exit
-          end if
-          ! this subroutine generates exclusions by searching over bonded neighbors
-          ! recursively
+       ! make temporarary bond lookup table for this molecule type
+       allocate( bond_lookup_table( molecule_type_data(i_molecule_type)%n_atom , molecule_type_data(i_molecule_type)%n_atom ) )
+       bond_lookup_table=0
+       do i_bond=1, size( molecule_type_data(i_molecule_type)%bond_list )
+          i_atom = molecule_type_data(i_molecule_type)%bond_list(i_bond)%i_atom
+          j_atom = molecule_type_data(i_molecule_type)%bond_list(i_bond)%j_atom
+          bond_lookup_table(i_atom,j_atom)=1
+          bond_lookup_table(j_atom,i_atom)=1
+       end do
+
+       do i_atom=1, molecule_type_data(i_molecule_type)%n_atom
+          ! fill in self-exclusion
+          molecule_type_data(i_molecule_type)%pair_exclusions(i_atom, i_atom) = 1
+
+          ! this subroutine generates exclusions by searching over bonded neighbors recursively
           n_bonds=1
           bond_trajectory(1) = i_atom
-          call search_bonds_recursive( i_molecule_type, i_atom, i_atom, n_bonds , bond_trajectory, max_search )
+          call search_bonds_recursive( i_molecule_type, i_atom, i_atom, n_bonds , bond_trajectory, bond_lookup_table, max_search )
        end do
+
+       deallocate( bond_lookup_table )
     end do
 
   end subroutine generate_intramolecular_exclusions
@@ -599,35 +596,37 @@ contains
   ! are n_bonds away from i_atom, then an exclusion is generated between that
   ! neighbor and i_atom
   !******************************************
-  recursive subroutine search_bonds_recursive( i_molecule_type, i_atom, j_atom, n_bonds_in , bond_trajectory, max_search )
+  recursive subroutine search_bonds_recursive( i_molecule_type, i_atom, j_atom, n_bonds_in , bond_trajectory, bond_lookup_table, max_search )
     use global_variables
     integer, intent(in) :: i_molecule_type, i_atom, j_atom, n_bonds_in, max_search
     integer, dimension(:), intent(in) :: bond_trajectory
+    integer, dimension(:,:), intent(in) :: bond_lookup_table
+
     integer, dimension(size(bond_trajectory)) :: update_bond_trajectory
     integer :: local_atom, n_bonds_out, flag
 
     update_bond_trajectory = bond_trajectory
 
-    do local_atom=1, MAX_N_ATOM
+    do local_atom=1, molecule_type_data(i_molecule_type)%n_atom
        ! if there's a bond between this atom and j_atom
-       if ( molecule_bond_list(i_molecule_type, j_atom, local_atom) == 1 ) then
+       if ( bond_lookup_table(j_atom, local_atom) == 1 ) then
           ! make sure we are not doubling back on bonding trajectory
           flag = check_list( bond_trajectory , n_bonds_in , local_atom )
           if ( flag == 0 ) then
-             if ( ( n_bonds_in == 3 ) .and. ( n_excl < 3 ) .and. ( molecule_exclusions(i_molecule_type, i_atom, local_atom) /= 1 ) ) then
+             if ( ( n_bonds_in == 3 ) .and. ( n_excl < 3 ) .and. ( molecule_type_data(i_molecule_type)%pair_exclusions(i_atom, local_atom) /= 1 ) ) then
                 ! this is a 1-4 interaction, label this separately, unless 1-4 are excluded, or we
                 ! have explicitly read this in as an exclusion
-                molecule_exclusions(i_molecule_type, i_atom, local_atom) = 2
+                molecule_type_data(i_molecule_type)%pair_exclusions(i_atom, local_atom) = 2
              else
                 ! fill in exclusion for i_atom
-                molecule_exclusions(i_molecule_type, i_atom, local_atom) = 1
+                molecule_type_data(i_molecule_type)%pair_exclusions(i_atom, local_atom) = 1
              end if
 
              n_bonds_out = n_bonds_in + 1
              update_bond_trajectory(n_bonds_out)= local_atom
 
              if ( n_bonds_out <= max_search ) then
-                call search_bonds_recursive( i_molecule_type, i_atom, local_atom, n_bonds_out , update_bond_trajectory, max_search )
+                call search_bonds_recursive( i_molecule_type, i_atom, local_atom, n_bonds_out , update_bond_trajectory, bond_lookup_table, max_search )
              end if
           end if
        end if
@@ -1034,6 +1033,7 @@ contains
     integer, dimension(:), intent(inout) :: flag_moleculetype
 
     integer :: nargs, flag, i_mole_type, ind, i_atom, j_atom, k_atom, l_atom, i_type, j_type, k_type , l_type
+    integer :: i_bond, i_angle, i_dihedral, n_bond, n_angle, n_dihedral
     integer :: flag_atoms, flag_bonds, flag_angles, flag_dihedrals, flag_exclusions, flag_newmole
     real*8  :: mass_atom
     real*8, parameter :: small = 1D-6
@@ -1071,21 +1071,17 @@ contains
     if ( i_mole_type < 0 ) then
        n_molecule_type = n_molecule_type + 1
        i_mole_type = n_molecule_type
-       molecule_type_name(i_mole_type) = i_molecule_name
+       molecule_type_data(i_mole_type)%mname = i_molecule_name
+
        flag_newmole = 1
        write(*,*) "...reading new molecule type ", i_molecule_name
-       write(*,*) "from .top file.  This molecule type wasn't present in .conf file,"
+       write(*,*) "from .top file.  This molecule type wasn't present in .gro file,"
        write(*,*) "which makes sense only for an evb simulation..."
        write(*,*) ""
     else
        flag_newmole = 0
     end if
 
-    ! initialize bondlist and anglelist and dihedrallist for this molecule type
-    molecule_bond_list( i_mole_type,:,:) = 0
-    molecule_angle_list( i_mole_type,:,:,:) = 0
-    molecule_dihedral_list( i_mole_type,:,:,:,:) = 0
-    molecule_dihedral_flag( i_mole_type ) = 0
     ! found this moleculetype, set flag
     flag_moleculetype(i_mole_type)=1
 
@@ -1107,6 +1103,41 @@ contains
        ind=INDEX(input_string,'[ atoms ]')
        if ( ind .ne. 0 ) then
           flag_atoms=1
+
+          ! if this is a new molecule type, first get the number of atoms so that we can allocate data arrays
+          if ( flag_newmole == 1 ) then
+             molecule_type_data(i_mole_type)%n_atom=0
+             do
+                call read_topology_line( file_h , input_string , flag )
+                ! if end of file, exit outer loop
+                if ( flag == -1 ) then
+                   flag_eof=1
+                   exit loop1
+                end if
+                ! if blank line, exit inner loop
+                if ( flag == 1 ) Exit
+
+                molecule_type_data(i_mole_type)%n_atom = molecule_type_data(i_mole_type)%n_atom + 1
+             end do
+
+             ! rewind file
+             do i_atom=1,molecule_type_data(i_mole_type)%n_atom+1
+                backspace(file_h)
+             enddo
+
+             ! now allocate data structures for this molecule type
+             allocate( molecule_type_data(i_mole_type)%atom_type_index( molecule_type_data(i_mole_type)%n_atom ) )
+             allocate( molecule_type_data(i_mole_type)%pair_exclusions( molecule_type_data(i_mole_type)%n_atom , molecule_type_data(i_mole_type)%n_atom ) )
+             ! zero molecule_exclusions here
+             molecule_type_data(i_mole_type)%pair_exclusions = 0
+             ! for MS-EVB
+             allocate(molecule_type_data(i_mole_type)%evb_reactive_basic_atoms( molecule_type_data(i_mole_type)%n_atom ))
+             molecule_type_data(i_mole_type)%evb_reactive_basic_atoms=0
+
+
+          end if
+
+
           loop2: do 
              call read_topology_line( file_h , input_string , flag )
              ! if end of file, exit outer loop
@@ -1127,7 +1158,7 @@ contains
 
              ! if old molecule, make sure this atom type matches .conf file
              if ( flag_newmole == 0 ) then
-                i_type = molecule_type(i_mole_type,i_atom)
+                i_type = molecule_type_data(i_mole_type)%atom_type_index(i_atom)
                 if ( i_atom_name .ne. atype_name(i_type) ) then
                    write(*,*) "for molecule ", i_mole_type, " atom order "
                    write(*,*) "in .top file does not match atom order in "
@@ -1137,7 +1168,7 @@ contains
              else
                 ! new molecule, fill in molecule types
                 call atype_name_reverse_lookup( i_atom_name, i_type )
-                molecule_type(i_mole_type,i_atom) = i_type
+                molecule_type_data(i_mole_type)%atom_type_index(i_atom) = i_type
              endif
 
              if ( atype_mass(i_type) < 0d0 ) then
@@ -1154,11 +1185,6 @@ contains
 
           end do loop2
 
-          if ( flag_newmole == 1 ) then
-             ! mark end 
-             molecule_type(i_mole_type,i_atom+1) = MAX_N_ATOM_TYPE + 1
-          endif
-
        end if
 
 
@@ -1166,6 +1192,8 @@ contains
        ind=INDEX(input_string,'[ bonds ]')
        if ( ind .ne. 0 ) then
           flag_bonds=1
+          ! first figure out how many bonds for this molecule type
+          n_bond=0
           loop3: do 
              call read_topology_line( file_h , input_string , flag )
              ! if end of file, exit outer loop
@@ -1176,18 +1204,31 @@ contains
              ! if blank line, exit inner loop
              if ( flag == 1 ) Exit loop3
 
+             n_bond = n_bond + 1
+          end do loop3
+
+          ! rewind file
+          do i_bond=1,n_bond+1
+             backspace(file_h)
+          enddo
+          ! allocate bond_list
+          allocate( molecule_type_data(i_mole_type)%bond_list(n_bond) )
+
+          ! now store bond list
+          do i_bond=1, n_bond
+             call read_topology_line( file_h , input_string , flag )
              call parse(input_string," ",args,nargs)   
              ! ignore function type here
              read(args(1),*) i_atom
              read(args(2),*) j_atom
              ! add to bondlist
-             molecule_bond_list(i_mole_type,i_atom,j_atom)=1
-             molecule_bond_list(i_mole_type,j_atom,i_atom)=1
+             molecule_type_data(i_mole_type)%bond_list(i_bond)%i_atom = i_atom
+             molecule_type_data(i_mole_type)%bond_list(i_bond)%j_atom = j_atom
 
              ! make sure we have bonded parameters for this pair
              ! check that force constant is non-zero
-             i_type = molecule_type(i_mole_type,i_atom)
-             j_type = molecule_type(i_mole_type,j_atom)
+             i_type = molecule_type_data(i_mole_type)%atom_type_index(i_atom)
+             j_type = molecule_type_data(i_mole_type)%atom_type_index(j_atom)
 
              if ( atype_bond_parameter(i_type,j_type,2) < small ) then
                 write(*,*) ""
@@ -1195,16 +1236,19 @@ contains
                 write(*,*) "between atomtypes ", atype_name(i_type), atype_name(j_type)
                 write(*,*) ""
                 stop
-            end if
+             end if
 
-          end do loop3
+          end do
        end if
 
        !***************** angles section ********************
        ind=INDEX(input_string,'[ angles ]')
        if ( ind .ne. 0 ) then
           flag_angles=1
-          loop4: do 
+
+          ! first figure out how many angles for this molecule type
+          n_angle=0
+          loop4: do
              call read_topology_line( file_h , input_string , flag )
              ! if end of file, exit outer loop
              if ( flag == -1 ) then
@@ -1214,20 +1258,34 @@ contains
              ! if blank line, exit inner loop
              if ( flag == 1 ) Exit loop4
 
+             n_angle = n_angle + 1
+          end do loop4
+
+          ! rewind file
+          do i_angle=1,n_angle+1
+             backspace(file_h)
+          enddo
+          ! allocate angle_list
+          allocate( molecule_type_data(i_mole_type)%angle_list(n_angle) )
+
+          ! now store angle list
+          do i_angle=1, n_angle
+             call read_topology_line( file_h , input_string , flag )
              call parse(input_string," ",args,nargs)   
              ! ignore function type here
              read(args(1),*) i_atom
              read(args(2),*) j_atom
              read(args(3),*) k_atom
              ! add to anglelist
-             molecule_angle_list(i_mole_type,i_atom,j_atom,k_atom)=1
-             molecule_angle_list(i_mole_type,k_atom,j_atom,i_atom)=1
+             molecule_type_data(i_mole_type)%angle_list(i_angle)%i_atom=i_atom
+             molecule_type_data(i_mole_type)%angle_list(i_angle)%j_atom=j_atom
+             molecule_type_data(i_mole_type)%angle_list(i_angle)%k_atom=k_atom
 
              ! make sure we have angle parameters for this triplet
              ! check that force constant is non-zero
-             i_type = molecule_type(i_mole_type,i_atom)
-             j_type = molecule_type(i_mole_type,j_atom)
-             k_type = molecule_type(i_mole_type,k_atom)
+             i_type = molecule_type_data(i_mole_type)%atom_type_index(i_atom)
+             j_type = molecule_type_data(i_mole_type)%atom_type_index(j_atom)
+             k_type = molecule_type_data(i_mole_type)%atom_type_index(k_atom)
 
              if ( atype_angle_parameter(i_type,j_type,k_type,2) < small ) then
                 write(*,*) ""
@@ -1235,25 +1293,41 @@ contains
                 write(*,*) "between atomtypes ", atype_name(i_type), atype_name(j_type), atype_name(k_type)
                 write(*,*) ""
                 stop
-            end if
+             end if
 
-          end do loop4
+          end do
        end if
 
        !***************** dihedrals section ********************
        ind=INDEX(input_string,'[ dihedrals ]')
        if ( ind .ne. 0 ) then
           flag_dihedrals=1
-          loop5: do 
+
+          ! first figure out how many dihedrals for this molecule type
+          n_dihedral=0
+          loop5: do
              call read_topology_line( file_h , input_string , flag )
              ! if end of file, exit outer loop
              if ( flag == -1 ) then
                 flag_eof=1
-                exit loop1
+                exit loop5
              end if
              ! if blank line, exit inner loop
              if ( flag == 1 ) Exit loop5
 
+             n_dihedral = n_dihedral + 1
+          end do loop5
+
+          ! rewind file
+          do i_dihedral=1,n_dihedral+1
+             backspace(file_h)
+          enddo
+          ! allocate dihedral_list
+          allocate( molecule_type_data(i_mole_type)%dihedral_list(n_dihedral) )
+
+          ! now store dihedral list
+          do i_dihedral=1, n_dihedral
+             call read_topology_line( file_h , input_string , flag )
              call parse(input_string," ",args,nargs)   
              ! ignore function type here
              read(args(1),*) i_atom
@@ -1261,17 +1335,17 @@ contains
              read(args(3),*) k_atom
              read(args(4),*) l_atom
              ! add to dihedral list
-             molecule_dihedral_list(i_mole_type,i_atom,j_atom,k_atom,l_atom)=1
-             molecule_dihedral_list(i_mole_type,l_atom,k_atom,j_atom,i_atom)=1
-             ! if any dihedrals, set to 1
-             molecule_dihedral_flag( i_mole_type ) = 1
+             molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%i_atom=i_atom
+             molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%j_atom=j_atom
+             molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%k_atom=k_atom
+             molecule_type_data(i_mole_type)%dihedral_list(i_dihedral)%l_atom=l_atom
 
-             ! make sure we have angle parameters for this triplet
+             ! make sure we have dihedral parameters for this quartet
              ! check that force constant is non-zero
-             i_type = molecule_type(i_mole_type,i_atom)
-             j_type = molecule_type(i_mole_type,j_atom)
-             k_type = molecule_type(i_mole_type,k_atom)
-             l_type = molecule_type(i_mole_type,l_atom)
+             i_type = molecule_type_data(i_mole_type)%atom_type_index(i_atom)
+             j_type = molecule_type_data(i_mole_type)%atom_type_index(j_atom)
+             k_type = molecule_type_data(i_mole_type)%atom_type_index(k_atom)
+             l_type = molecule_type_data(i_mole_type)%atom_type_index(l_atom)
 
              if ( atype_dihedral_parameter(i_type,j_type,k_type,l_type,2) < small ) then
                 write(*,*) ""
@@ -1279,9 +1353,9 @@ contains
                 write(*,*) "between atomtypes ", atype_name(i_type), atype_name(j_type), atype_name(k_type), atype_name(l_type) 
                 write(*,*) ""
                 stop
-            end if
+             end if
 
-          end do loop5
+          end do
        end if
 
        !****************** exclusions section **********************
@@ -1300,8 +1374,8 @@ contains
              call parse(input_string," ",args,nargs)   
              read(args(1),*) i_atom
              read(args(2),*) j_atom
-             molecule_exclusions(i_mole_type, i_atom, j_atom)=1
-             molecule_exclusions(i_mole_type, j_atom, i_atom)=1
+             molecule_type_data(i_mole_type)%pair_exclusions(i_atom, j_atom)=1
+             molecule_type_data(i_mole_type)%pair_exclusions(j_atom, i_atom)=1
           enddo loop6
        end if
 

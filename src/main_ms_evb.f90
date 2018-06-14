@@ -33,8 +33,6 @@ program main_ms_evb
   !***** Local variables
   integer :: i_step
 
-  ! test
-  integer :: i_atom 
 
   !********** initialize constants in global variables
   call initialize_constants( file_io_data , verlet_list_data , PME_data )
@@ -84,11 +82,6 @@ program main_ms_evb
 
 
   call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data )
-
-  do i_atom=1, system_data%total_atoms
-     write(*,*) i_atom, atom_data%force(:,i_atom)
-  enddo
-  stop
 
 
   Select Case( restart_trajectory )

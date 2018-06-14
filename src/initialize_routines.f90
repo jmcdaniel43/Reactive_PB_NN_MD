@@ -114,9 +114,7 @@ contains
     ! initialize mass to negative values to make sure we read all of these in
     atype_mass=-1d0
 
-    ! read in topology information, zero molecule_exclusions here, as it is possible that
-    ! exclusions are being read in from topology file
-    molecule_exclusions=0
+    ! read topology file
     call read_topology_file( file_io_data%ifile_top_file_h, file_io_data%ifile_top )
 
     ! mass is read in from topology file, fill in mass for each molecule
@@ -130,8 +128,7 @@ contains
     call shift_molecules_into_box( system_data%n_mole , molecule_data , atom_data , system_data%box,  system_data%xyz_to_box_transform )
 
 
-    ! generate exclusions, note that some exclusions may have already been explicity read in
-    ! from topology file.
+    ! generate exclusions, note that some exclusions may have already been explicity read in from topology file.
     call generate_intramolecular_exclusions
 
 
@@ -671,22 +668,28 @@ contains
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
     type(single_molecule_data_type) :: single_molecule_data
-    integer:: i_mole,j_mole,i_atom, old_type,count, flag_name
+    integer:: i_mole,j_mole,i_atom, old_type, flag_name
 
     ! first molecule type is first molecule in input file
     i_mole = 1
     ! attach pointers to atom subarrays for 1st molecule
     call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_type_index=atom_data%atom_type_index )
     n_molecule_type = 1
-    do i_atom=1, molecule_data(i_mole)%n_atom
-       molecule_type(n_molecule_type,i_atom) = single_molecule_data%atom_type_index(i_atom)
-    enddo
-    ! mark end
-    if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM ) then
-       molecule_type(n_molecule_type,molecule_data(i_mole)%n_atom+1) = MAX_N_ATOM_TYPE + 1
-    endif
 
-    molecule_type_name(n_molecule_type)=molecule_data(i_mole)%mname
+    ! allocate data structure for first molecule type
+    molecule_type_data(n_molecule_type)%n_atom =  molecule_data(i_mole)%n_atom
+    allocate( molecule_type_data(n_molecule_type)%atom_type_index(molecule_data(i_mole)%n_atom) )
+    allocate( molecule_type_data(n_molecule_type)%pair_exclusions( molecule_data(i_mole)%n_atom , molecule_data(i_mole)%n_atom) )
+    ! zero molecule_exclusions here, as it is possible that exclusions are being read in from topology file
+     molecule_type_data(n_molecule_type)%pair_exclusions = 0
+    ! for MS-EVB
+    allocate( molecule_type_data(n_molecule_type)%evb_reactive_basic_atoms(molecule_data(i_mole)%n_atom) ) 
+    molecule_type_data(n_molecule_type)%evb_reactive_basic_atoms=0
+
+    do i_atom=1, molecule_data(i_mole)%n_atom
+       molecule_type_data(n_molecule_type)%atom_type_index(i_atom) = single_molecule_data%atom_type_index(i_atom)
+    enddo
+    molecule_type_data(n_molecule_type)%mname = molecule_data(i_mole)%mname
     molecule_data(i_mole)%molecule_type_index = n_molecule_type
 
     ! loop over rest of molecules
@@ -699,34 +702,23 @@ contains
        ! loop over all stored molecule types to see if this solute molecule is a new type
        do j_mole =1, n_molecule_type
           ! see if same name
-          if ( molecule_type_name(j_mole) .eq. molecule_data(i_mole)%mname ) then
+          if ( molecule_type_data(j_mole)%mname .eq. molecule_data(i_mole)%mname ) then
              flag_name = 1
           end if
 
           ! now check to see if they have same number of atoms
-          do i_atom =1, MAX_N_ATOM
-             if( molecule_type(j_mole,i_atom) .eq. MAX_N_ATOM_TYPE + 1) exit
-             count = i_atom
-          enddo
-
-          if( molecule_data(i_mole)%n_atom .eq. count) then
+          if( molecule_data(i_mole)%n_atom .eq. molecule_type_data(j_mole)%n_atom ) then
 
              do i_atom=1, molecule_data(i_mole)%n_atom
-                if ( single_molecule_data%atom_type_index(i_atom) .ne. molecule_type(j_mole,i_atom)) then
+                if ( single_molecule_data%atom_type_index(i_atom) .ne. molecule_type_data(j_mole)%atom_type_index(i_atom) ) then
                    goto 100
                 endif
              enddo
-             ! make sure that we haven't just matched a smaller molecule to part of a larger molecule
-             if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM ) then
-                if ( molecule_type(j_mole,molecule_data(i_mole)%n_atom+1 ) .ne. ( MAX_N_ATOM_TYPE + 1 ) ) then
-                   goto 100
-                endif
-             end if
 
              ! make sure these molecules have the same name to avoid confusion, note this is different on the name
              ! check at the beginning of the loop, because that checks to see if any previous molecule
              ! had the same name, not just this specific molecule
-             if ( molecule_type_name(j_mole) .ne. molecule_data(i_mole)%mname ) then
+             if ( molecule_type_data(j_mole)%mname .ne. molecule_data(i_mole)%mname ) then
                 stop "two identical  molecules have different names!"
              endif
 
@@ -754,20 +746,27 @@ contains
              stop
           end if
 
-          do i_atom=1,molecule_data(i_mole)%n_atom
-             molecule_type(n_molecule_type,i_atom) = single_molecule_data%atom_type_index(i_atom)
+          ! allocate data structure for this molecule type
+          molecule_type_data(n_molecule_type)%n_atom =  molecule_data(i_mole)%n_atom
+          allocate( molecule_type_data(n_molecule_type)%atom_type_index(molecule_data(i_mole)%n_atom) )
+          allocate( molecule_type_data(n_molecule_type)%pair_exclusions( molecule_data(i_mole)%n_atom , molecule_data(i_mole)%n_atom) )
+          ! zero molecule_exclusions here, as it is possible that exclusions are being read in from topology file
+          molecule_type_data(n_molecule_type)%pair_exclusions = 0
+          ! for MS-EVB
+          allocate( molecule_type_data(n_molecule_type)%evb_reactive_basic_atoms(molecule_data(i_mole)%n_atom) )
+          molecule_type_data(n_molecule_type)%evb_reactive_basic_atoms=0
+
+
+          do i_atom=1, molecule_data(i_mole)%n_atom
+             molecule_type_data(n_molecule_type)%atom_type_index(i_atom) = single_molecule_data%atom_type_index(i_atom)
           enddo
-          ! mark end
-          if ( molecule_data(i_mole)%n_atom < MAX_N_ATOM ) then
-             molecule_type(n_molecule_type,molecule_data(i_mole)%n_atom+1 ) = MAX_N_ATOM_TYPE + 1
-          end if
-          molecule_type_name(n_molecule_type) = molecule_data(i_mole)%mname
-          molecule_data(i_mole)%molecule_type_index= n_molecule_type
+          molecule_type_data(n_molecule_type)%mname = molecule_data(i_mole)%mname
+          molecule_data(i_mole)%molecule_type_index = n_molecule_type
 
        endif
+       ! dissociate pointers
+       call dissociate_single_molecule_data(single_molecule_data)
     enddo
-
-  call dissociate_single_molecule_data(single_molecule_data)
 
   end subroutine gen_molecule_type_data
 

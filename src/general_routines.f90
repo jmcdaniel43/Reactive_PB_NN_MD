@@ -609,26 +609,31 @@ contains
 
 
 
-
   !***********************************
   ! this subroutine is used to find the index
   ! of the heavy atom to which a hydrogen atom
   ! is bonded.
   !***********************************
-  subroutine find_bonded_atom_hydrogen( i_mole_type, n_atom , hydrogen_atom , heavy_atom )
+  subroutine find_bonded_atom_hydrogen( i_mole_type, hydrogen_atom , heavy_atom )
     use global_variables
     integer, intent(in) :: i_mole_type, hydrogen_atom
-    integer, intent(in) :: n_atom
     integer, intent(out) :: heavy_atom
 
-    integer :: j_atom, count
+    integer :: i_bond, i_atom, j_atom, count
 
     count=0
-    do j_atom=1, n_atom
-       if ( molecule_bond_list(i_mole_type,hydrogen_atom,j_atom) == 1 ) then
+    ! loop over bond list for this molecule
+    do i_bond=1, size(molecule_type_data(i_mole_type)%bond_list)
+        ! atom pairs
+        i_atom = molecule_type_data(i_mole_type)%bond_list(i_bond)%i_atom
+        j_atom = molecule_type_data(i_mole_type)%bond_list(i_bond)%j_atom
+        if ( i_atom == hydrogen_atom ) then
           heavy_atom = j_atom
           count = count + 1
-       end if
+        else if( j_atom == hydrogen_atom ) then
+          heavy_atom = i_atom
+          count = count + 1          
+        end if
     enddo
 
     ! make sure we found 1 and only 1 atom
@@ -637,6 +642,7 @@ contains
     end if
 
   end subroutine find_bonded_atom_hydrogen
+
 
 
 
@@ -1648,7 +1654,7 @@ contains
 
   !*******************************
   ! this subroutine acts like a hash for
-  ! the global variable molecule_type_name array.
+  ! the global variable molecule_type_data(:)%mname array.
   ! Rather than looking up the molecule name
   ! using the integer index, it finds the
   ! molecule_type index using the name
@@ -1662,7 +1668,7 @@ contains
     index=-1
     do i_mole=1, n_molecule_type
 
-       if ( moleculetype .eq. molecule_type_name(i_mole) ) then
+       if ( moleculetype .eq. molecule_type_data(i_mole)%mname ) then
           index = i_mole
           exit
        end if

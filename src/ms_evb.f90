@@ -149,7 +149,7 @@ contains
   ! checks for such requirements
   !*************************
   subroutine evb_consistency_checks( )
-    integer              :: i_mole,i_atom, flag_h
+    integer              :: i_mole_type,i_atom, flag_h
 
     ! We will be adding and removing hydrogen atoms to and from
     ! conjugate acids and bases
@@ -157,15 +157,14 @@ contains
     ! The simplest way to do this is to require that 
     ! acidic protons are stored last
 
-    do i_mole=1,n_molecule_type
-       if ( evb_acid_molecule( i_mole ) == 1 ) then
+    do i_mole_type=1,n_molecule_type
+       if ( evb_acid_molecule( i_mole_type ) == 1 ) then
           flag_h = 0
-          loop2:  do i_atom=1,MAX_N_ATOM
-             if ( molecule_type(i_mole,i_atom) == MAX_N_ATOM_TYPE + 1 ) exit loop2
-             if ( evb_reactive_protons( i_mole , i_atom ) == 1 ) flag_h=1
-             if ( ( flag_h == 1 ) .and. ( evb_reactive_protons( i_mole , i_atom ) == 0 ) ) then
+          loop2:  do i_atom=1,molecule_type_data(i_mole_type)%n_atom
+             if ( molecule_type_data(i_mole_type)%evb_reactive_protons(i_atom) == 1 ) flag_h=1
+             if ( ( flag_h == 1 ) .and. ( molecule_type_data(i_mole_type)%evb_reactive_protons(i_atom) == 0 ) ) then
                 write(*,*) "acidic protons must be defined last in the molecule topology"
-                write(*,*) "this is not true for molecule ", molecule_type_name(i_mole)
+                write(*,*) "this is not true for molecule ", molecule_type_data(i_mole_type)%mname
                 stop
              end if
           end do loop2
@@ -276,15 +275,15 @@ contains
     allocate( eigenvalues(diabat_index) , ground_state_eigenvector(diabat_index), hamiltonian(diabat_index, diabat_index) , eigenvectors(diabat_index,diabat_index) )
 
 
-        write(*,*) "hamiltonian"
+    !    write(*,*) "hamiltonian"
     hamiltonian=0d0
     do i_state = 1 , diabat_index
-             write(*,*) "i_state", i_state
+    !         write(*,*) "i_state", i_state
        do j_state = i_state , diabat_index
           hamiltonian( i_state, j_state ) = evb_hamiltonian(i_state,j_state)
           hamiltonian(j_state, i_state ) = hamiltonian(i_state, j_state )
        end do
-           write(*,*) hamiltonian( i_state , : )
+    !       write(*,*) hamiltonian( i_state , : )
     end do
 
 
@@ -564,7 +563,7 @@ contains
        ! loop over all hydrogen atoms for this donor
        do i_atom=1, molecule_data(i_mole_donor)%n_atom
 
-          flag_reactive_atom = evb_reactive_protons(i_mole_type,i_atom)
+          flag_reactive_atom = molecule_type_data(i_mole_type)%evb_reactive_protons(i_atom)
           ! if reactive atom (proton), consider all possible diabats formed from the transfer of this proton
           if ( flag_reactive_atom == 1 ) then
 
@@ -607,7 +606,7 @@ contains
 
                 ! now add new proton transfer information
                 ! find basic bonded atom of donating proton
-                call find_bonded_atom_hydrogen( i_mole_type, molecule_data(i_mole_donor)%n_atom, i_atom, j_atom )
+                call find_bonded_atom_hydrogen( i_mole_type, i_atom, j_atom )
                 index=count+1
                 evb_diabat_proton_log(diabat_index_acceptor,index,1) = i_mole_donor
                 evb_diabat_proton_log(diabat_index_acceptor,index,2) = i_atom
@@ -774,7 +773,7 @@ contains
              ! and if this is the case these are stored as different neighbors
              loop2:          do j_atom = 1 , molecule_data(j_mole)%n_atom
 
-                if ( evb_reactive_basic_atoms(j_mole_type, j_atom) == 1 ) then
+                if ( molecule_type_data(j_mole_type)%evb_reactive_basic_atoms(j_atom) == 1 ) then
                    ! see if this reactivity pair is within the cutoff distance
                    rij = pbc_dr( single_molecule_data_i%xyz(:,i_atom), single_molecule_data_j%xyz(:,j_atom), shift ) ! Note for COM cutoff, shift values unchanged
                    if ( dot_product(rij,rij) < evb_reactive_pair_distance**2 ) then
@@ -957,9 +956,9 @@ contains
     molecule_data_diabat(i_mole_donor)%molecule_type_index = evb_conjugate_pairs( molecule_data_diabat(i_mole_donor)%molecule_type_index )
     molecule_data_diabat(i_mole_acceptor)%molecule_type_index = evb_conjugate_pairs( molecule_data_diabat(i_mole_acceptor)%molecule_type_index )  
 
-    ! now molecule name, molecule_type_name is a global variable array of names
-    molecule_data_diabat(i_mole_donor)%mname = molecule_type_name( molecule_data_diabat(i_mole_donor)%molecule_type_index )
-    molecule_data_diabat(i_mole_acceptor)%mname = molecule_type_name( molecule_data_diabat(i_mole_acceptor)%molecule_type_index )
+    ! now molecule name, molecule_type_data(:)%mname is a global variable array of names
+    molecule_data_diabat(i_mole_donor)%mname = molecule_type_data( molecule_data_diabat(i_mole_donor)%molecule_type_index )%mname
+    molecule_data_diabat(i_mole_acceptor)%mname = molecule_type_data( molecule_data_diabat(i_mole_acceptor)%molecule_type_index )%mname
 
     ! may need to reorder data structures for acceptor molecule based on index of acceptor
     ! heavy atom to be consistent with molecule_type array
@@ -991,16 +990,15 @@ contains
     i_mole_type = molecule_data_acceptor%molecule_type_index
 
     ! loop over all atoms in molecule_type array
-    loop1 : do i_atom=1, MAX_N_ATOM
-       if ( molecule_type(i_mole_type,i_atom) == MAX_N_ATOM_TYPE + 1 ) exit loop1
+    loop1 : do i_atom=1, molecule_type_data(i_mole_type)%n_atom
 
        ! if atomtypes don't correspond, then we need to shift data
-       if ( molecule_type(i_mole_type,i_atom) /= single_molecule_data_acceptor%atom_type_index(i_atom) ) then
+       if ( molecule_type_data(i_mole_type)%atom_type_index(i_atom) /= single_molecule_data_acceptor%atom_type_index(i_atom) ) then
 
           ! loop through remaining atoms to find first occurance of this atomtype
           index=-1
           loop2: do j_atom = i_atom+1, molecule_data_acceptor%n_atom
-             if ( molecule_type(i_mole_type,i_atom) == single_molecule_data_acceptor%atom_type_index(j_atom) ) then
+             if ( molecule_type_data(i_mole_type)%atom_type_index(i_atom) == single_molecule_data_acceptor%atom_type_index(j_atom) ) then
                 index = j_atom
                 exit loop2
              endif
@@ -1138,10 +1136,11 @@ contains
     ! now forces from electrostatic derivative, here we can directly update atomic atom_data_diabat%force array
     atom_data_diabat%force(:,:) = atom_data_diabat%force(:,:) - dVex(:,:) * A
 
-    deallocate( dVex )
-
+    ! dissociate pointers before deallocating, since force pointers point to dVex
     call dissociate_single_molecule_data(single_molecule_data_donor)
     call dissociate_single_molecule_data(single_molecule_data_acceptor)
+    ! now deallocate
+    deallocate( dVex )
 
   end subroutine evb_diabatic_coupling
 
@@ -1444,10 +1443,14 @@ contains
 
              enddo
           enddo
+        ! dissociate pointers
+        call dissociate_single_molecule_data(single_molecule_data_local)
        endif
     enddo
 
-
+    ! dissociate pointers
+    call dissociate_single_molecule_data(single_molecule_data_donor)
+    call dissociate_single_molecule_data(single_molecule_data_acceptor)
 
   end subroutine evb_diabatic_coupling_electrostatics
 
@@ -1555,6 +1558,10 @@ contains
        !************************************* subtract the forces from the donor topology
        atom_data_diabat%force = atom_data_diabat%force - d_force_atoms
 
+       ! deallocate pointers
+       call dissociate_single_molecule_data(single_molecule_data_donor)
+       call dissociate_single_molecule_data(single_molecule_data_acceptor)
+
 
        ! ********************** Now switch to acceptor topology, and compute force and energy updates from acceptor topology
        d_force_atoms=0d0
@@ -1572,10 +1579,8 @@ contains
 
 
        ! reset molecule pointers now that we've switched to acceptor topology,
-       !      call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge )
-       !      call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge )
-       call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge, atom_mass=atom_data_diabat%mass, atom_type_index = atom_data_diabat%atom_type_index, atom_name=atom_data_diabat%aname )
-       call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz,atom_charge=atom_data_diabat%charge, atom_mass=atom_data_diabat%mass, atom_type_index = atom_data_diabat%atom_type_index, atom_name=atom_data_diabat%aname )
+       call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge )
+       call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_charge=atom_data_diabat%charge )
 
 
        !********** donor
@@ -1598,14 +1603,16 @@ contains
        ! output energy
        system_data_diabat%potential_energy = system_data_diabat%potential_energy + E_reference_acceptor + dE_acceptor_diabat_intra + dE_acceptor_diabat_real_space + E_acceptor_ms_evb_repulsion - E_reference_donor - dE_donor_diabat_intra - dE_donor_diabat_real_space - E_donor_ms_evb_repulsion
 
+       ! deallocate pointers
+       call dissociate_single_molecule_data(single_molecule_data_donor)
+       call dissociate_single_molecule_data(single_molecule_data_acceptor)
+
     end do   ! end loop over proton hops
 
     ! store this Q_grid for future use
     Q_grid_diabats(:,:,:,i_diabat) = Q_grid_local
     deallocate(Q_grid_local)
 
-    call dissociate_single_molecule_data(single_molecule_data_donor)
-    call dissociate_single_molecule_data(single_molecule_data_acceptor)
 
   end subroutine ms_evb_diabat_force_energy
 
@@ -1910,26 +1917,26 @@ contains
 
     !****************** bond terms ***********************************
     ! donor
-    call intra_molecular_bond_energy_force( E_local, single_molecule_data_donor, i_donor_type,  molecule_data_diabat(i_mole_donor)%n_atom )
+    call intra_molecular_bond_energy_force( E_local, single_molecule_data_donor, i_donor_type )
     E_intra = E_intra + E_local
     ! acceptor
-    call intra_molecular_bond_energy_force( E_local, single_molecule_data_acceptor, i_acceptor_type,  molecule_data_diabat(i_mole_acceptor)%n_atom  )
+    call intra_molecular_bond_energy_force( E_local, single_molecule_data_acceptor, i_acceptor_type )
     E_intra = E_intra + E_local
 
     !******************** angle terms ****************************
     ! donor
-    call intra_molecular_angle_energy_force( E_local, single_molecule_data_donor, i_donor_type,  molecule_data_diabat(i_mole_donor)%n_atom  )
+    call intra_molecular_angle_energy_force( E_local, single_molecule_data_donor, i_donor_type )
     E_intra = E_intra + E_local
     ! acceptor
-    call intra_molecular_angle_energy_force( E_local, single_molecule_data_acceptor, i_acceptor_type,  molecule_data_diabat(i_mole_acceptor)%n_atom  )
+    call intra_molecular_angle_energy_force( E_local, single_molecule_data_acceptor, i_acceptor_type )
     E_intra = E_intra + E_local
 
     !******************* dihedral terms ***************************
     ! donor
-    call intra_molecular_dihedral_energy_force( E_local, single_molecule_data_donor, i_donor_type,  molecule_data_diabat(i_mole_donor)%n_atom  ) 
+    call intra_molecular_dihedral_energy_force( E_local, single_molecule_data_donor, i_donor_type ) 
     E_intra = E_intra + E_local
     ! acceptor
-    call intra_molecular_dihedral_energy_force( E_local, single_molecule_data_acceptor, i_acceptor_type,  molecule_data_diabat(i_mole_acceptor)%n_atom  ) 
+    call intra_molecular_dihedral_energy_force( E_local, single_molecule_data_acceptor, i_acceptor_type ) 
     E_intra = E_intra + E_local
 
   call dissociate_single_molecule_data(single_molecule_data_donor)
@@ -2183,6 +2190,10 @@ contains
        enddo
        deallocate( xyz_scale )
 
+       ! dissociate pointers
+       call dissociate_single_molecule_data(single_molecule_data_donor)
+       call dissociate_single_molecule_data(single_molecule_data_acceptor)
+
        !******************** now change data structure topology for proton transfer
        call evb_change_data_structures_proton_transfer( i_mole_donor, i_atom_donor, i_mole_acceptor, i_atom_acceptor, i_heavy_acceptor, atom_data_diabat, molecule_data_diabat, system_data_diabat, hydronium_molecule_index_temp )
 
@@ -2219,6 +2230,10 @@ contains
        enddo
        deallocate( xyz_scale )
 
+    ! dissociate pointers
+    call dissociate_single_molecule_data(single_molecule_data_donor)
+    call dissociate_single_molecule_data(single_molecule_data_acceptor)
+
     enddo loop1
 
 
@@ -2231,9 +2246,6 @@ contains
     ! molecule_data_diabat topology will be changed, but that's ok as we're done with it here
     call map_diabat_force_to_principle_recursive( i_diabat, i_hop, i_mole_principle, molecule_data_diabat, pme_force_recip_diabat )
 
-
-    call dissociate_single_molecule_data(single_molecule_data_donor)
-    call dissociate_single_molecule_data(single_molecule_data_acceptor)
     ! now deallocate atom_data_diabat data structure as we're done with it
     call deallocate_atom_data_diabat_type( atom_data_diabat )
 
@@ -2385,11 +2397,14 @@ contains
 
              end if
           end do
+
+        ! dissociate pointers
+        call dissociate_single_molecule_data(single_molecule_data_j)
        end if
     end do
 
+  ! dissociate pointers
   call dissociate_single_molecule_data(single_molecule_data_i)
-  call dissociate_single_molecule_data(single_molecule_data_j)
 
   end subroutine ms_evb_three_atom_repulsion
 
@@ -2463,12 +2478,14 @@ contains
 
                 end if
              enddo
+            ! dissociate pointers
+            call dissociate_single_molecule_data(single_molecule_data_j) 
           endif
        enddo
     enddo
 
+    ! dissociate pointers
     call dissociate_single_molecule_data(single_molecule_data_i)
-    call dissociate_single_molecule_data(single_molecule_data_j)
 
   end subroutine ms_evb_born_mayer
 
@@ -2915,9 +2932,8 @@ contains
 
     ! now search the molecule type array of the acid to find the index of this atom type
     i_atom_base=-1
-    do i_atom=1, MAX_N_ATOM
-       if ( molecule_type(i_type_acid,i_atom) == MAX_N_ATOM_TYPE + 1 ) exit
-       if ( molecule_type(i_type_acid,i_atom) == i_type_heavy ) then
+    do i_atom=1, molecule_type_data(i_type_acid)%n_atom
+       if ( molecule_type_data(i_type_acid)%atom_type_index(i_atom) == i_type_heavy ) then
           i_atom_base = i_atom
           exit
        endif
@@ -2946,9 +2962,8 @@ contains
 
     ! now search the molecule type array of the acid to find the index of this atom type
     i_atom_acid=-1
-    do i_atom=1, MAX_N_ATOM
-       if ( molecule_type(i_type_acid,i_atom) == MAX_N_ATOM_TYPE + 1 ) exit
-       if ( molecule_type(i_type_acid,i_atom) == i_type_heavy ) then
+    do i_atom=1, molecule_type_data(i_type_acid)%n_atom
+       if ( molecule_type_data(i_type_acid)%atom_type_index(i_atom) == i_type_heavy ) then
           i_atom_acid = i_atom
           exit
        endif
@@ -3248,6 +3263,10 @@ contains
        evb_proton_index(itype1) = atype1
        evb_heavy_acid_index(itype1) = atype2
 
+       ! allocate evb_reactive_proton arrays for these molecule types
+       allocate( molecule_type_data(itype1)%evb_reactive_protons( molecule_type_data(itype1)%n_atom ) )
+       allocate( molecule_type_data(itype2)%evb_reactive_protons( molecule_type_data(itype2)%n_atom ) )
+
 
        ! ****************for each evb_pairs section that we find, get topology information
        ! first , reactive protons section
@@ -3265,7 +3284,7 @@ contains
           call parse(input_string," ",args,nargs)
           if ( nargs /= 2 ) stop "must have 2 arguments in 'acid_reactive_protons' section of [ evb_pairs ] section of topology file"
           read(args(1),*) index1
-          read(args(2),*) evb_reactive_protons( itype1, index1 )
+          read(args(2),*) molecule_type_data(itype1)%evb_reactive_protons(index1)
        enddo
 
        call read_file_find_heading( file_h, '[ base_reactive_protons ]' , flag_base_reactive_protons, flag_eof )    
@@ -3282,7 +3301,7 @@ contains
           call parse(input_string," ",args,nargs)
           if ( nargs /= 2 ) stop "must have 2 arguments in 'base_reactive_protons' section of [ evb_pairs ] section of topology file"
           read(args(1),*) index1
-          read(args(2),*) evb_reactive_protons( itype2, index1 )
+          read(args(2),*) molecule_type_data(itype2)%evb_reactive_protons(index1)
        enddo
 
        !***************** now reactive acceptor atoms section
@@ -3300,7 +3319,7 @@ contains
           call parse(input_string," ",args,nargs)
           if ( nargs /= 2 ) stop "must have 2 arguments in 'acid_acceptor_atoms' section of [ evb_pairs ] section of topology file"
           read(args(1),*) index1
-          read(args(2),*) evb_reactive_basic_atoms( itype1, index1 )
+          read(args(2),*) molecule_type_data(itype1)%evb_reactive_basic_atoms(index1)
        enddo
 
        call read_file_find_heading( file_h, '[ base_acceptor_atoms ]' , flag_base_acceptor_atoms, flag_eof )    
@@ -3317,7 +3336,7 @@ contains
           call parse(input_string," ",args,nargs)
           if ( nargs /= 2 ) stop "must have 2 arguments in 'base_acceptor_atoms' section of [ evb_pairs ] section of topology file"
           read(args(1),*) index1
-          read(args(2),*) evb_reactive_basic_atoms( itype2, index1 )
+          read(args(2),*) molecule_type_data(itype2)%evb_reactive_basic_atoms(index1)
        enddo
 
        !***************************** now conjugate atoms section
