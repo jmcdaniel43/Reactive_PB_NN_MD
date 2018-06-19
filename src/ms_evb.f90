@@ -710,7 +710,8 @@ contains
        ! store the energy
        evb_hamiltonian( diabat_index_donor , i_diabat ) = system_data_diabat%potential_energy
 
-       ! now deallocate atom_data_diabat data structure as we're done with it
+       ! now deallocate molecule_data_diabat and atom_data_diabat data structure as we're done with it
+       call deallocate_molecule_data_diabat_type( molecule_data_diabat )
        call deallocate_atom_data_diabat_type( atom_data_diabat )
 
     enddo
@@ -784,12 +785,14 @@ contains
                    endif
                 endif
              enddo loop2
+             ! dissociate pointers that we're finished with
+             call dissociate_single_molecule_data(single_molecule_data_j)
           end if
        end if
     end do
 
+    ! dissociate pointers
     call dissociate_single_molecule_data(single_molecule_data_i)
-    call dissociate_single_molecule_data(single_molecule_data_j)
 
   end subroutine find_evb_reactive_neighbors
 
@@ -818,6 +821,8 @@ contains
     ! now allocate molecule_data_diabat and copy molecule_data 
     allocate(molecule_data_diabat(n_mole))
     do i_mole=1,n_mole
+       ! allocate atom_index array
+       allocate( molecule_data_diabat(i_mole)%atom_index(size(molecule_data(i_mole)%atom_index)) )
        molecule_data_diabat(i_mole) = molecule_data(i_mole)
     enddo
 
@@ -3111,6 +3116,25 @@ contains
 
 
   end subroutine initialize_atom_data_diabat_type
+
+
+  
+  !*****************************
+  ! we need to explicitly deallocate this data structure
+  ! because it contains allocatable array of allocatable arrays
+  !*****************************
+  subroutine deallocate_molecule_data_diabat_type( molecule_data_diabat )
+    type(molecule_data_type), dimension(:), allocatable, intent(inout)  :: molecule_data_diabat
+    integer :: i_mole
+
+    ! first deallocate atom_index array for each type array element
+    do i_mole = 1 , size( molecule_data_diabat )
+       deallocate( molecule_data_diabat(i_mole)%atom_index )
+    enddo
+    deallocate( molecule_data_diabat )
+
+  end subroutine deallocate_molecule_data_diabat_type
+
 
 
  
