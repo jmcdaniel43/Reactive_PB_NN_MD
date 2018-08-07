@@ -24,10 +24,10 @@ COMPILER=ifort
 MKLMOD=./mkl_modules
 
 # this first compiler option is for testing...
-#OPT="-O1 -g -openmp -static -check all -warn all -traceback -debug all"
+OPT="-O1 -g -openmp -static -check all -warn all -traceback -debug all"
 #OPT="-vec-report3 -openmp -static"
 #OPT="-O3 -qopenmp -static"
-OPT="-Ofast -openmp -static"  # note Ofast includes -xHost ISA specific vectorization in addition to -O3 level optimization
+#OPT="-Ofast -openmp -static"  # note Ofast includes -xHost ISA specific vectorization in addition to -O3 level optimization
 
 # note using the -openmp option will result in automatic memory allocation of all arrays, which for ifort could result in a stack overflow
 # therefore if code segfaults on some machines, try ulimit -s unlimited

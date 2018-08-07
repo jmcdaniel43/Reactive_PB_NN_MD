@@ -548,9 +548,9 @@ contains
           else if(xyz_scale(l,i_atom)>= dble(K)) then
              xyz_scale(l,i_atom)=xyz_scale(l,i_atom)-dble(K)
           endif
-          ! make sure scaled coordinates are not numerically equal to zero, otherwise this will screw up Q grid routine
-          if ( abs(xyz_scale(l,i_atom)) < small ) then
-             xyz_scale(l,i_atom) = small
+          ! make sure scaled coordinates are not numerically equal to integers, otherwise this will screw up Q grid routine
+          if ( abs(mod(xyz_scale(l,i_atom),1.0)) < small ) then
+             xyz_scale(l,i_atom) = xyz_scale(l,i_atom) + small
           end if
        enddo
     enddo
@@ -1203,6 +1203,8 @@ contains
     type(verlet_list_data_type), intent(inout) :: verlet_list_data
     integer, intent(in) :: total_atoms
     real*8,  intent(in) :: volume
+    integer, parameter :: min_neighbors =50  ! this is arbitrary, used to keep dilute simulations from crashing
+    integer            :: min_size_verlet
 
     integer :: size_verlet
     real*8  :: pi
@@ -1226,7 +1228,9 @@ contains
 
     ! for huge box, value of temp could be zero if we just have gas phase dimer
     ! verlet list should be at least as big as number of molecules
-    size_verlet = max( total_atoms , size_verlet )
+    min_size_verlet= total_atoms * min_neighbors
+
+    size_verlet = max( min_size_verlet , size_verlet )
 
     ! safe_verlet is factor that we multiply theoretically needed size of verlet list to be safe
     ! found in global_variables

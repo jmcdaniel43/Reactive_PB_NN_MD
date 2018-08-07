@@ -387,7 +387,8 @@ contains
     ! by convention, molecules are not broken up over pbc, so we don't need to
     ! consider shift or minimum image for these intra-molecular interactions
 
-    do i_atom=1, n_atom
+
+    do i_atom=1, n_atom-1
 
        n_excluded=0
        n_nonexcluded=0
@@ -396,6 +397,7 @@ contains
 
        ! get number of exclusions, non-exclusions between this and rest of atoms in molecule
        do j_atom = i_atom + 1, n_atom
+
           if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom, j_atom ) /= 1 ) then
              n_nonexcluded = n_nonexcluded + 1  ! not excluded
           else
@@ -417,6 +419,7 @@ contains
        index_nonexcluded=1
        do j_atom = i_atom + 1, n_atom
           j_type = single_molecule_data%atom_type_index(j_atom)
+
           if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom, j_atom ) /= 1 ) then  
               ! nonexcluded            
               pairwise_neighbor_data_nonexcluded%atom_index(index_nonexcluded) = j_atom
@@ -451,6 +454,7 @@ contains
            
        ! now add non-excluded intra-molecular real-space electrostatic and VDWs interactions
        if ( n_nonexcluded > 0 ) then
+
            call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_nonexcluded%f_ij ,  pairwise_neighbor_data_nonexcluded%dr, pairwise_neighbor_data_nonexcluded%dr2,  pairwise_neighbor_data_nonexcluded%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )
            call pairwise_real_space_LJ( E_vdw_local , pairwise_neighbor_data_nonexcluded%f_ij ,  pairwise_neighbor_data_nonexcluded%dr, pairwise_neighbor_data_nonexcluded%dr2 , pairwise_neighbor_data_nonexcluded%atype_vdw_parameter )
            E_elec = E_elec + E_elec_local
@@ -569,6 +573,7 @@ contains
      ! $omp simd
 
      dr_mag=sqrt(dr2)
+
      ! make array with values of the complementary error function applied to alpha_sqrt * distance
      erfc_value(:) = erfc_table(ceiling((dr_mag(:)*alpha_sqrt)/erfc_max*dble(erfc_grid)))
 

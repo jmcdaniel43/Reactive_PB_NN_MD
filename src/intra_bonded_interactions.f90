@@ -1347,6 +1347,11 @@ contains
              k_type = molecule_type_data(i_mole_type)%atom_type_index(k_atom)
              l_type = molecule_type_data(i_mole_type)%atom_type_index(l_atom)
 
+             ! check force constant for proper, improper (not RB)
+             Select Case(atype_dihedral_type( i_type , j_type, k_type, l_type ))
+             Case(3)
+                continue
+             case default
              if ( atype_dihedral_parameter(i_type,j_type,k_type,l_type,2) < small ) then
                 write(*,*) ""
                 write(*,*) "Must have reasonable force constant for dihedral potential"
@@ -1354,6 +1359,7 @@ contains
                 write(*,*) ""
                 stop
              end if
+             End Select
 
           end do
        end if

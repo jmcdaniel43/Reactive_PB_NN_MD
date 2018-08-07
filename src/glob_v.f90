@@ -38,7 +38,7 @@ implicit none
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
   character(3)  :: grid_Tang_Toennies ! grid damping functions
 
-  character(3), parameter  :: ms_evb_simulation="yes"   ! ms_evb
+  character(3), parameter  :: ms_evb_simulation="no"   ! ms_evb
   character(3), parameter  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
 
 !***********************************************************************************************
