@@ -34,8 +34,8 @@ contains
     character(10) :: param_string
     character(30) :: param_name,line
     real*8 :: param_number
-    integer:: flag_ensemble=0, flag_n_step=0, flag_n_output=0, flag_temperature=0
-    integer:: flag_delta_t=0, flag_real_space_cutoff=0, flag_n_threads=0, flag_lj_bkghm=0,flag_lj_comb_rule=0,flag_lj_comb_rule2=0
+    integer:: flag_ensemble=0, flag_n_step=0, flag_n_output=0, flag_temperature=0, flag_n_exclusions=0
+    integer:: flag_delta_t=0, flag_real_space_cutoff=0, flag_n_threads=0, flag_lj_comb_rule=0
     integer:: flag_na_nslist=0, flag_nb_nslist=0, flag_nc_nslist=0, flag_verlet_cutoff=0, flag_debug=0, flag_grid_Tang_Toennies=0, flag_alpha_sqrt=0, flag_pme_grid=0, flag_spline_order=0, flag_checkpoint_velocity=0
 
 
@@ -63,9 +63,6 @@ contains
        Case("lj_comb_rule")
           lj_comb_rule = param_string
           flag_lj_comb_rule=1
-       Case("lj_comb_rule2")
-          lj_comb_rule2 = param_string
-          flag_lj_comb_rule2=1
        Case("grid_Tang_Toennies")
           grid_Tang_Toennies = param_string
           flag_grid_Tang_Toennies=1
@@ -86,6 +83,9 @@ contains
        Case("n_output")
           integrator_data%n_output = NINT( param_number )
           flag_n_output=1
+       Case("n_exclusions")
+          n_exclusions = NINT( param_number )
+          flag_n_exclusions = 1
        Case("checkpoint_velocity")
           n_step_velocity = NINT( param_number )
           flag_checkpoint_velocity=1
@@ -95,9 +95,6 @@ contains
        Case("delta_t")
           integrator_data%delta_t = param_number
           flag_delta_t = 1
-       Case("lj_bkghm")
-          lj_bkghm = param_number
-          flag_lj_bkghm = 1
        Case("real_space_cutoff")
           real_space_cutoff = param_number
           flag_real_space_cutoff = 1  
@@ -140,9 +137,6 @@ contains
 
     ! ********************************************* REQUIRED VARIABLES have no default values *******************************************
     ! Simulation_Methodology section
-    if( flag_lj_bkghm .eq. 0 ) then
-       stop "variable lj_bkghm has not been given a value, set to either '1' for buckingham or '2' for lennard jones (or 3 for a hybrid treatment)"
-    endif
     if( flag_n_step .eq. 0 ) then
        stop "variable n_step has not been given a value under the Simulation Parameters section in simulation parameter input file"
     endif
@@ -151,6 +145,9 @@ contains
     endif
     if( flag_temperature .eq. 0 ) then
        stop "variable temperature has not been given a value under the Simulation Parameters section in simulation parameter input file"
+    endif
+    if( flag_n_exclusions .eq. 0 ) then
+       stop "variable n_exclusions has not been given a value under the Simulation Parameters section in simulation parameter input file"
     endif
     if( flag_real_space_cutoff .eq. 0 ) then
        stop "variable real_space_cutoff has not been given a value under the Simulation Parameters section in simulation parameter input file"
@@ -230,16 +227,11 @@ contains
     !
     !******************************************************************************************
 
-    Select Case(lj_bkghm)
-    Case(2)
-       ! first check combination rule
-       if( flag_lj_comb_rule .eq. 0 ) then 
+    ! first check combination rule
+    if( flag_lj_comb_rule .eq. 0 ) then 
           stop "variable lj_comb_rule has not been given a value.  For lj force field, Set to either 'opls' for opls combination rule, or 'standard' for Lorentz-Berthelot combination rule"
-       endif
+    endif
 
-    case default
-       stop " please set lj_bkghm variable to  '2' for a LJ potential "
-    End Select
 
 
     ! using grid based construction of verlet list, make sure we've read in grid size

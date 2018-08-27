@@ -273,7 +273,6 @@ contains
           dTang_Toennies_table(3,i) = dTang_Toennies_damp(x,10)
           dTang_Toennies_table(4,i) = dTang_Toennies_damp(x,12)
        enddo
-
     End Select
 
 
@@ -300,105 +299,133 @@ contains
     character(*),intent(in):: ifile_pmt
     integer,dimension(:,:),intent(out) :: gen_cross_terms
 
-    integer::i_type, j_type, i_param, n_cross, inputstatus,ind,ind1,ind2
+    integer::i_type, j_type, i_param, n_cross, inputstatus,ind1,ind2,ind3
     integer,parameter :: max_param=20
-    real*8,parameter :: small=1D-6
+    real*8,parameter :: small=1D-6, exp_init=3d0
     character(20),dimension(max_param) :: args
     real*8,dimension(6) :: store
     integer        :: nargs
     character(300) :: input_string
     character(50)::line
+    character(5)::c_name
 
 
     gen_cross_terms=0
+
+    ! if we're not using SAPT-FF interactions, initialize to zero.  But
+    ! initialize exponents to finite value to be safe for combination rules...
+    atype_vdw_tmp=0d0
+    atype_vdw_tmp(:,:,5) = exp_init
 
     ! store has dimension 6, since atype_vdw_parameter has dimension 6 ( changed to accomodate C12).  Zero these components that will not be used
     store=0d0
 
     open(unit=file_h,file=ifile_pmt,status="old")
 
-    ! get solute atom types
+    ! READ FILE, look for three headings
+    ! HEADING 1: 'solute_species'  -- standard coulomb and LJ interactions
+    ! HEADING 2: 'custom_sapt_parameters' -- SAPT-FF force field section
+    ! HEADING 3: 'cross_terms'  -- Explicit cross terms for LJ interactions
+    ! note that there could also be another section called 'pairtypes' which is
+    ! for custom 1-4 interactions, but this is read by a different subroutine
     do
        Read(file_h,'(A)',Iostat=inputstatus) line
        If(inputstatus < 0) Exit
-       ind=INDEX(line,'solute_species')
-       IF(ind .NE. 0) Exit
-    enddo
-    Read(file_h,'(A)',Iostat=inputstatus) line
-    read(file_h,*) n_atom_type
+       ind1=INDEX(line,'solute_species')
+       ind2=INDEX(line,'custom_sapt_parameters')
+       ind3=INDEX(line,'cross_terms')
 
-    do i_type=1, n_atom_type
-       ! new input format, we assume lj force field (not buckingham), and read in an integer to decide if that atom type will be frozen
-       read(file_h,'(A)') input_string
-       call parse(input_string," ",args,nargs)
-       if ( nargs /= 5 ) then
-          write(*,*) ""
-          write(*,*) "should have 5 input arguments under solute_species section "
-          write(*,*) "in parameter file :: atype_name, charge, epsilon, sigma, atype_freeze "
-          write(*,*) "please check input file "
-          write(*,*) ""
-          stop
-       end if
+       ! ******** solute_species section ************
+       IF(ind1 .NE. 0) then
 
-       atype_name(i_type) = args(1)(1:MAX_ANAME)
-       read(args(2),*) atype_chg(i_type)
-       read(args(3),*) atype_vdw_parameter(i_type,i_type,1)     
-       read(args(4),*) atype_vdw_parameter(i_type,i_type,2)
-       read(args(5),*) atype_freeze(i_type)
+          Read(file_h,'(A)',Iostat=inputstatus) line
+          read(file_h,*) n_atom_type
+          do i_type=1, n_atom_type
+              ! new input format, we assume lj force field (not buckingham), and read in an integer to decide if that atom type will be frozen
+              read(file_h,'(A)') input_string
+              call parse(input_string," ",args,nargs)
+              if ( nargs /= 5 ) then
+                 write(*,*) ""
+                 write(*,*) "should have 5 input arguments under solute_species section "
+                 write(*,*) "in parameter file :: atype_name, charge, epsilon, sigma, atype_freeze "
+                 write(*,*) "please check input file "
+                 write(*,*) ""
+                 stop
+              end if
 
-       ! warn if freezing atom type
-       if ( atype_freeze(i_type) == 1 ) then
-          write(*,*) "NOTE: Atomtype ", atype_name(i_type)," will be frozen during the simulation"
-       end if
+              atype_name(i_type) = args(1)(1:MAX_ANAME)
+              read(args(2),*) atype_chg(i_type)
+              read(args(3),*) atype_vdw_parameter(i_type,i_type,1)     
+              read(args(4),*) atype_vdw_parameter(i_type,i_type,2)
+              read(args(5),*) atype_freeze(i_type)
 
-       ! move spaces for matching
-       call trim_end( atype_name(i_type) )
-    enddo
+              ! warn if freezing atom type
+              if ( atype_freeze(i_type) == 1 ) then
+                 write(*,*) "NOTE: Atomtype ", atype_name(i_type)," will be frozen during the simulation"
+              end if
 
-
-    ! set up lj_bkghm_index array, in this case all atom pairs use the same potential
-    lj_bkghm_index = lj_bkghm
-
-
-    ind=0
-    ! find out whether to read cross terms or generate them
-    do
-       Read(file_h,'(A)',Iostat=inputstatus) line
-       If(inputstatus < 0) Exit
-       ind=INDEX(line,'cross_terms')
-       IF(ind .NE. 0) Exit
-    enddo
-
-
-    if ( ind .ne. 0 ) then
-       read(file_h,*) n_cross
-       if(n_cross > 0) then
-          do i_param=1, n_cross
-             read(file_h,*) ind1,ind2, store(1),store(2),store(3)
-             Select Case(lj_comb_rule)
-             Case("opls")
-                ! C12 goes first, this is read in as second parameter
-                atype_vdw_parameter(ind1,ind2,1)=store(2)
-                atype_vdw_parameter(ind1,ind2,2)=store(1)
-                atype_vdw_parameter(ind2,ind1,1)=store(2)
-                atype_vdw_parameter(ind2,ind1,2)=store(1)
-             Case default
-                atype_vdw_parameter(ind1,ind2,:)=store(:)
-                atype_vdw_parameter(ind2,ind1,:)=store(:)
-                ! make sure we have corret combination rule selected, sigma and epsilon should be << 1000
-                if ( ( atype_vdw_parameter(ind1,ind2,1) > 1000d0 ) .or. ( atype_vdw_parameter(ind1,ind2,2) > 1000d0 ) ) then
-                   write(*,*) "looks like combination rule should be opls.  Cross term parameters look "
-                   write(*,*) "like C6 and C12 instead of epsilon and sigma based on their magnitudes  "
-                   write(*,*) "please check consistency of cross terms and parameters "
-                   stop
-                end if
-
-             end Select
-             gen_cross_terms(ind1,ind2)=1
-             gen_cross_terms(ind2,ind1)=1
+              ! move spaces for matching
+              call trim_end( atype_name(i_type) )
           enddo
-       endif
-    endif
+
+       !******* SAPT-FF section
+       ELSE IF(ind2 .NE. 0) then
+          Read(file_h,'(A)',Iostat=inputstatus) line
+          do i_type=1, n_atom_type
+             read(file_h,'(A)') input_string
+             call parse(input_string," ",args,nargs)
+             if ( nargs /= 10 ) then
+                write(*,*) ""
+                write(*,*) "should have 10 input arguments under custom_sapt_parameters"
+                write(*,*) "in parameter file :: atype_name, 4 A parameters,1 B "
+                write(*,*) "and 4 C parameters "
+                write(*,*) "please check input file"
+                stop
+             end if
+             c_name = args(1)(1:MAX_ANAME)
+             read(args(2),*) atype_vdw_tmp(i_type,i_type,1)
+             read(args(3),*) atype_vdw_tmp(i_type,i_type,2)
+             read(args(4),*) atype_vdw_tmp(i_type,i_type,3)
+             read(args(5),*) atype_vdw_tmp(i_type,i_type,4)
+             read(args(6),*) atype_vdw_tmp(i_type,i_type,5)
+             read(args(7),*) atype_vdw_tmp(i_type,i_type,6)
+             read(args(8),*) atype_vdw_tmp(i_type,i_type,7)
+             read(args(9),*) atype_vdw_tmp(i_type,i_type,8)
+             read(args(10),*) atype_vdw_tmp(i_type,i_type,9)
+          enddo
+
+       !******* Explicit Cross terms 
+       ELSE IF ( ind3 .ne. 0 ) then
+          read(file_h,*) n_cross
+          if(n_cross > 0) then
+             do i_param=1, n_cross
+                read(file_h,*) i_type,j_type, store(1),store(2),store(3)
+                Select Case(lj_comb_rule)
+                Case("opls")
+                   ! C12 goes first, this is read in as second parameter
+                   atype_vdw_parameter(i_type,j_type,1)=store(2)
+                   atype_vdw_parameter(i_type,j_type,2)=store(1)
+                   atype_vdw_parameter(j_type,i_type,1)=store(2)
+                   atype_vdw_parameter(j_type,i_type,2)=store(1)
+                Case default
+                   atype_vdw_parameter(i_type,j_type,:)=store(:)
+                   atype_vdw_parameter(j_type,i_type,:)=store(:)
+                   ! make sure we have corret combination rule selected, sigma and epsilon should be << 1000
+                   if ( ( atype_vdw_parameter(i_type,j_type,1) > 1000d0 ) .or. ( atype_vdw_parameter(i_type,j_type,2) > 1000d0 ) ) then
+                      write(*,*) "looks like combination rule should be opls.  Cross term parameters look "
+                      write(*,*) "like C6 and C12 instead of epsilon and sigma based on their magnitudes  "
+                      write(*,*) "please check consistency of cross terms and parameters "
+                      stop
+                   end if
+                end Select
+                gen_cross_terms(i_type,j_type)=1
+                gen_cross_terms(j_type,i_type)=1
+             enddo
+          endif
+
+      END IF
+   
+    enddo
 
     ! finally make sure we don't have two of the same atom type defined
 
@@ -412,12 +439,8 @@ contains
     enddo
 
     close(file_h)
-
-
+    
   end subroutine read_param
-
-
-
 
 
 
@@ -444,45 +467,77 @@ contains
     integer,dimension(:,:),intent(in) :: gen_cross_terms
 
     integer:: i_param, j_param, i_atom,i_type,flag
-
+    real*8, parameter :: small=1D-6
+    
     ! if opls force field, we need to create C12 and C6 atomic terms first
-    Select Case( lj_bkghm )
-    Case(2)
-       Select Case( lj_comb_rule )
+    Select Case( lj_comb_rule )
        Case("opls")
           do i_param=1,n_atom_type
              call gen_C12_C6_epsilon_sigma(atype_vdw_parameter,i_param,i_param)
           enddo
-       End Select
     End Select
 
-    ! create cross term parameters
-
+    ! create cross terms first
     do i_param=1, n_atom_type
-       do j_param=1,n_atom_type
+       do j_param=1, n_atom_type
+        if (i_param .NE. j_param) then
           if (gen_cross_terms(i_param,j_param) .eq. 0) then
-             ! if these cross terms weren't given in input file
-             call combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_bkghm,lj_comb_rule)
+
+            if (atype_vdw_parameter(i_param,i_param,1) > small .and. atype_vdw_parameter(j_param,j_param,1) > small) then 
+              ! this is Lennard-Jones interaction
+              atype_vdw_type(i_param,j_param)=0
+              call combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_comb_rule, atype_vdw_type)
+            else if ( atype_vdw_tmp(i_param,i_param,1) > small .and. atype_vdw_tmp(j_param,j_param,1) > small ) then
+              ! this is SAPT-FF interaction
+              atype_vdw_type(i_param,j_param)=1
+              call combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_comb_rule, atype_vdw_type, atype_vdw_tmp)
+            else
+              ! no interaction, set atype_vdw_type to -1
+              atype_vdw_type(i_param,j_param)=-1
+              ! call cross-term combination rule to zero parameters, even though
+              ! we shouldn't be using ...
+              call combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_comb_rule, atype_vdw_type)
+            end if
+
           else
-             ! use given terms
-             atype_vdw_parameter(i_param,j_param,:) = atype_vdw_parameter(i_param,j_param,:)
+             ! use given terms, this is an LJ interaction
+             atype_vdw_type(i_param,j_param)=0
           endif
+        endif
        enddo
     enddo
 
-    ! if Lorentz-Berthelot combination rules were used, we now  need to create C12 and C6 atomic and cross terms
-    Select Case( lj_bkghm )
-    Case(2)
-       Select Case( lj_comb_rule )
-       Case("standard")
-          do i_param=1,n_atom_type
-             do j_param=1,n_atom_type
-                call gen_C12_C6_epsilon_sigma(atype_vdw_parameter,i_param,j_param)
-             enddo
-          enddo
-       End Select
-    End Select
+    ! now diagonal terms
+    do i_param=1, n_atom_type
+        if (atype_vdw_parameter(i_param,i_param,1) > small )  then
+           ! LJ interaction    
+           atype_vdw_type(i_param,i_param) = 0
+           call combination_rule_cross_terms(atype_vdw_parameter,i_param,i_param,lj_comb_rule,atype_vdw_type)
+        else if (atype_vdw_tmp(i_param,i_param,1) > small )  then
+           ! SAPT-FF interaction
+           atype_vdw_type(i_param,i_param) = 1
+           call combination_rule_cross_terms(atype_vdw_parameter,i_param,i_param,lj_comb_rule,atype_vdw_type,atype_vdw_tmp)             
+        else
+           ! no interaction, set atype_vdw_type to -1
+           atype_vdw_type(i_param,i_param)=-1
+           ! call cross-term combination rule to zero parameters, even though
+           ! we shouldn't be using ...
+           call combination_rule_cross_terms(atype_vdw_parameter,i_param,i_param,lj_comb_rule, atype_vdw_type)
+        end if
+    enddo
 
+    ! if Lorentz-Berthelot combination rules were used, we now  need to create C12 and C6 atomic and cross terms
+    do i_param=1,n_atom_type
+      do j_param=1,n_atom_type
+        Select Case( atype_vdw_type(i_param,j_param) )
+         Case(0)
+          Select Case( lj_comb_rule )
+           Case("standard")
+                call gen_C12_C6_epsilon_sigma(atype_vdw_parameter,i_param,j_param)
+          End Select
+        End Select
+      enddo
+    enddo
     ! now create atom index array that links atoms to parameters
        do i_atom =1, total_atoms
           flag=0
@@ -504,6 +559,11 @@ contains
           charge(i_atom) = atype_chg(i_param)
        enddo
 
+       if (maxval(atype_vdw_tmp(:,:,5)) * real_space_cutoff > Tang_Toennies_max) then
+          write(*,*) maxval(atype_vdw_tmp(:,:,5)), real_space_cutoff, Tang_Toennies_max
+          write(*,*) "Table size for damping function is smaller than B_max*the real space cutoff"
+          stop
+       endif
   end subroutine gen_param
 
 
@@ -515,48 +575,34 @@ contains
   ! Lorentz-Berthelot combination rules operate on sigma and epsilon,
   ! Opls combination rules operate on C6, C12
   !***************************************************
-  subroutine combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_bkghm,lj_comb_rule,exp_only)
+  subroutine combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_comb_rule, atype_vdw_type, atype_vdw_tmp)
     real*8, dimension(:,:,:), intent(inout) :: atype_vdw_parameter
+    integer, dimension(:,:), intent(in) :: atype_vdw_type
+    real*8, dimension(:,:,:), intent(in), optional :: atype_vdw_tmp
     integer, intent(in) :: i_param,j_param
-    integer, intent(in) :: lj_bkghm
     character(*), intent(in) :: lj_comb_rule
-    integer, intent(in),optional :: exp_only
+    real*8 :: a_ex, a_el, a_ind, a_dhf, b_tmp
 
-    real*8 :: e1, e2
-    integer :: flag_exponent=0
-
-    ! if buckingham force field, we may want separate subroutine to generate cross terms for coefficients if we are using an energy decomposed force field.  We may only use this routine to generate exponents
-    Select Case(lj_bkghm)
+    Select Case(atype_vdw_type(i_param, j_param))
     Case(1)
-       if ( present(exp_only) ) then
-          flag_exponent = 1
-       endif
-    End Select
-
-    Select Case(lj_bkghm)
-    Case(1)
-       !************* buckingham force field
-       Select Case(lj_comb_rule)
-       Case("standard")
-          ! all geometric combination rules
-          atype_vdw_parameter(i_param,j_param,1) = sqrt(atype_vdw_parameter(i_param,i_param,1)*atype_vdw_parameter(j_param,j_param,1))    ! A coefficient
-          atype_vdw_parameter(i_param,j_param,2) = sqrt(atype_vdw_parameter(i_param,i_param,2)*atype_vdw_parameter(j_param,j_param,2))    ! B parameter
-          atype_vdw_parameter(i_param,j_param,3) = sqrt(atype_vdw_parameter(i_param,i_param,3)*atype_vdw_parameter(j_param,j_param,3))    ! C parameter
-       Case("ZIFFF")
-          ! only do prefactors if exp_only input isn't present
-          if ( flag_exponent .eq. 0 ) then
-             atype_vdw_parameter(i_param,j_param,1) = sqrt(atype_vdw_parameter(i_param,i_param,1)*atype_vdw_parameter(j_param,j_param,1))    ! A coefficient 
-          endif
-          ! exponent combination rules given by ZIF FF rules
-          ! B exponent
-          e1 = atype_vdw_parameter(i_param,i_param,2)
-          e2 = atype_vdw_parameter(j_param,j_param,2)
-          atype_vdw_parameter(i_param,j_param,2) = (e1+e2) * (e1*e2)/(e1**2+e2**2) 
-          atype_vdw_parameter(i_param,j_param,3) = sqrt(atype_vdw_parameter(i_param,i_param,3)*atype_vdw_parameter(j_param,j_param,3))    ! C coefficient
-       Case default
-          stop "lj_comb_rule parameter isn't recognized for buckingham type force field.  Please use either 'standard' for geometric combination rules, or 'ZIFFF' for ZIF FF combination rules"
-       End Select
-    Case(2)
+       !First handle all A terms and then combine them in the permanent
+       !atype_vdw_parameter structure
+       a_ex = sqrt(atype_vdw_tmp(i_param,i_param,1)*atype_vdw_tmp(j_param,j_param,1))
+       a_el = sqrt(atype_vdw_tmp(i_param,i_param,2)*atype_vdw_tmp(j_param,j_param,2))
+       a_ind = sqrt(atype_vdw_tmp(i_param,i_param,3)*atype_vdw_tmp(j_param,j_param,3))
+       a_dhf = sqrt(atype_vdw_tmp(i_param,i_param,4)*atype_vdw_tmp(j_param,j_param,4))
+       atype_vdw_parameter(i_param,j_param,1) = a_ex - a_el - a_ind - a_dhf
+       !B term 
+       b_tmp = (atype_vdw_tmp(i_param,i_param,5) + atype_vdw_tmp(j_param,j_param,5))*&
+atype_vdw_tmp(i_param,i_param,5)*atype_vdw_tmp(j_param,j_param,5)/(atype_vdw_tmp(i_param,i_param,5)**2+&
+atype_vdw_tmp(j_param,j_param,5)**2)
+       atype_vdw_parameter(i_param,j_param,2)=b_tmp
+       !C terms
+       atype_vdw_parameter(i_param,j_param,3) = sqrt(atype_vdw_tmp(i_param,i_param,6)*atype_vdw_tmp(j_param,j_param,6))
+       atype_vdw_parameter(i_param,j_param,4) = sqrt(atype_vdw_tmp(i_param,i_param,7)*atype_vdw_tmp(j_param,j_param,7))
+       atype_vdw_parameter(i_param,j_param,5) = sqrt(atype_vdw_tmp(i_param,i_param,8)*atype_vdw_tmp(j_param,j_param,8))
+       atype_vdw_parameter(i_param,j_param,6) = sqrt(atype_vdw_tmp(i_param,i_param,9)*atype_vdw_tmp(j_param,j_param,9))
+    Case default
        !************* lennard jones force field
        Select Case(lj_comb_rule)
        Case("standard")

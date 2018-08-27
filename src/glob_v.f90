@@ -38,7 +38,7 @@ implicit none
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
   character(3)  :: grid_Tang_Toennies ! grid damping functions
 
-  character(3), parameter  :: ms_evb_simulation="no"   ! ms_evb
+  character(3), parameter  :: ms_evb_simulation="yes"   ! ms_evb
   character(3), parameter  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
 
 !***********************************************************************************************
@@ -283,9 +283,9 @@ implicit none
 
   ! exclusions for intra-molecular interactions
   ! we could easily define molecule-type specific number of exclusions, if we
-  ! need to do this, put n_excl in molecule_type_data data structure and define
+  ! need to do this, put n_exclusions in molecule_type_data data structure and define
   ! for each molecule before setting molecule type exclusions
-  integer, parameter  :: n_excl = 2  ! this is the number of bonds away to exclude intra-molecular interactions
+  integer       :: n_exclusions   ! this is the number of bonds away to exclude intra-molecular interactions
 
  !*********************** defined type to store atom and connectivity info for each molecule type
  type molecule_type_data_type
@@ -318,19 +318,17 @@ implicit none
   integer, dimension(MAX_N_ATOM_TYPE) :: atype_freeze  ! this flag is for freezing atom types
   real*8, dimension(MAX_N_ATOM_TYPE) :: atype_mass    
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_vdw_parameter        ! for SAPT-FF, store A,B,C6,C8,C10,C12, for LJ, store epsilon,sigma
+  real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,9) :: atype_vdw_tmp
+  integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: atype_vdw_type
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_vdw_parameter_14        ! this is same as atype_vdw_parameter array, but stores special values for 1-4 interactions as used in GROMOS-45a3 force field
-  integer                 :: lj_bkghm                ! =1 for bkghm, =2 for lj
   character(10)            :: lj_comb_rule            ! for lj, set to "opls" or "standard"== Lorentz-Berthelot, for bkghm, set to "standard" or "ZIFFF"
- ! if lj_bkghm is set to 3, meaning we are using hybrid lj/bkghm force field, we need a 2nd combination rule.  The first "lj_comb_rule" will then be used for the bkghm force field for solute-framework interactions, and "lj_comb_rule2" will be used for the lj force field for solute-solute interactions
-  character(10)            :: lj_comb_rule2            ! this will only be used if lj_bkghm=3
-  integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: lj_bkghm_index ! this  maps which atom-atom types use a lj interaction, and which use a buckingham interaction, which is really only necessary for lj_bkghm=3, but is used always
 ! intra-molecular bond, angle and dihedral data structures
   integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE)  :: atype_bond_type  ! stores type of bond, 1=harmonic, 2=GROMOS-96, 3=Morse
   real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,3) :: atype_bond_parameter ! stores intra-molecular bond parameters for pair of atomtypes. For harmonic bond, first parameter is b0 (angstroms), second is kb (Kj/mol)/angstrom^2 , for Morse potential, first parameter is D (kJ/mol) , second is beta(angstroms^-1), third is b0(angstroms)
   integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE)  :: atype_angle_type ! stores type of angle, 1=harmonic, 2=GROMOS96
   real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,2) :: atype_angle_parameter ! stores intra-molecular angle parameters for set of three atomtypes.  First parameter is th0 (degrees), second is cth (Kj/mol)/ degree^2
-  integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE)  :: atype_dihedral_type ! stores type of dihedral, 1=proper, 2=improper
-  real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,3) :: atype_dihedral_parameter ! stores intra-molecular dihedral parameters, for improper:first parameter is xi0, second is kxi ; for proper, first is phi0, second is kphi, third is multiplicity
+  integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE)  :: atype_dihedral_type ! stores type of dihedral, 1=proper, 2=improper, 3=ryckaert-belleman
+  real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_dihedral_parameter ! stores intra-molecular dihedral parameters, for improper:first parameter is xi0, second is kxi ; for proper, first is phi0, second is kphi, third is multiplicity ; for ryckaert-bellemans, first is C0, second is C1, third is C2, fourth is C3, fifth is C4 and sixth is C5 
 
 !*******************************************************************************************************************************************
 
@@ -341,7 +339,7 @@ implicit none
   ! 12th order is 0.9998323
   ! This should be a fine max values, since at x=30, the C10/R^10, C12/R^12
   ! terms should be basically zero for the corresponding distance
-  real*8,parameter:: Tang_Toennies_max=30d0  
+  real*8,parameter:: Tang_Toennies_max=50d0  
   integer,parameter:: Tang_Toennies_grid=1000 !Tang_Toennies_grid=1000000
   real*8,dimension(4,Tang_Toennies_grid) :: Tang_Toennies_table, dTang_Toennies_table ! C6 is in 1st index, C8 in 2nd, C10 in 3rd, C12 in 4th
  

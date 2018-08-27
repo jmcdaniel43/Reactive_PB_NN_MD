@@ -214,6 +214,7 @@ contains
 
    n_mole = 0
    do i = 1, total_atoms
+   !Changed to *, was originally '(I5,2A5,I5,3F8.3)'
       read( file_handle, '(I5,2A5,I5,3F8.3)' ), i_mole, mname, aname, junk, r_tmp(1), r_tmp(2), r_tmp(3)
       call trim_end( aname )
       if ( i_mole /= n_mole ) then
@@ -258,6 +259,7 @@ contains
    i_mole_prev = 0
    i_atom = 0
    do i = 1, total_atoms
+        !Changed to *, was originally '(I5,2A5,I5,3F8.3)' 
         read( file_handle, '(I5,2A5,I5,3F8.3)' ), i_mole, mname, atom_data%aname(i), junk, r_tmp(1), r_tmp(2), r_tmp(3)
         call trim_end( atom_data%aname(i) )
         if ( i_mole /= i_mole_prev ) then
@@ -550,7 +552,7 @@ contains
           endif
           ! make sure scaled coordinates are not numerically equal to integers, otherwise this will screw up Q grid routine
           if ( abs(mod(xyz_scale(l,i_atom),1.0)) < small ) then
-             xyz_scale(l,i_atom) = xyz_scale(l,i_atom) + small
+             xyz_scale(l,i_atom) = xyz_scale(l,i_atom)+small
           end if
        enddo
     enddo
@@ -1203,9 +1205,8 @@ contains
     type(verlet_list_data_type), intent(inout) :: verlet_list_data
     integer, intent(in) :: total_atoms
     real*8,  intent(in) :: volume
-    integer, parameter :: min_neighbors =50  ! this is arbitrary, used to keep dilute simulations from crashing
-    integer            :: min_size_verlet
-
+    integer, parameter :: min_neighbors=50 ! this is arbitrary, used to keep simulations from crashing
+    integer :: min_size_verlet
     integer :: size_verlet
     real*8  :: pi
 
@@ -1225,11 +1226,9 @@ contains
     pi = constants%pi
     ! note size_verlet is integer, this will evaluate to integer...
     size_verlet = floor(4d0 * pi * verlet_list_data%verlet_cutoff**3 * dble(total_atoms)**2 / 6d0 / volume)
-
     ! for huge box, value of temp could be zero if we just have gas phase dimer
     ! verlet list should be at least as big as number of molecules
-    min_size_verlet= total_atoms * min_neighbors
-
+    min_size_verlet=total_atoms*min_neighbors
     size_verlet = max( min_size_verlet , size_verlet )
 
     ! safe_verlet is factor that we multiply theoretically needed size of verlet list to be safe
@@ -1739,8 +1738,6 @@ contains
     End Select
 
   end function C6_C10_damp
-
-
 
 
   !******************************************

@@ -79,7 +79,6 @@ contains
     !***********************************************************************!
 
 
-
     !***************************** intra-molecular bond, angle energy and forces *****************
 
     !****************************timing**************************************!
@@ -95,7 +94,6 @@ contains
        write(*,*) "intra_molecular force and energy finished at", time
     endif
     !***********************************************************************!
-
 
 
     ! total potential energy of system

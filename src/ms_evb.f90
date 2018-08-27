@@ -1535,6 +1535,7 @@ contains
        call ms_evb_diabat_force_energy_update_intra( d_force_atoms, dE_donor_diabat_intra, i_mole_donor, i_mole_acceptor, atom_data_diabat, molecule_data_diabat)
        ! real-space non-bonded energy and forces in donor topology--note reciprocal space PME will be computed later
        call ms_evb_diabat_force_energy_update_real_space( d_force_atoms, dE_donor_diabat_real_space, i_mole_donor, i_mole_acceptor, system_data_diabat, atom_data_diabat, molecule_data_diabat, PME_data)
+
        ! special ms-evb repulsion terms
        call ms_evb_intermolecular_repulsion( d_force_atoms , E_donor_ms_evb_repulsion, system_data_diabat, atom_data_diabat, molecule_data_diabat, hydronium_molecule_index_diabat )
        ! reference chemical energy for this adiabatic state
@@ -1669,6 +1670,7 @@ contains
     call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=force_atoms, atom_charge=atom_data_diabat%charge, atom_type_index=atom_data_diabat%atom_type_index )
     call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=force_atoms, atom_charge=atom_data_diabat%charge, atom_type_index=atom_data_diabat%atom_type_index )
 
+
     ! define local variables for convenience
     total_atoms = system_data_diabat%total_atoms
     alpha_sqrt  = PME_data%alpha_sqrt
@@ -1687,6 +1689,7 @@ contains
 
     dE_real_space = 0d0
     real_space_cutoff2 = real_space_cutoff ** 2
+
 
     ! ***************************************
     ! ************************ Donor molecule first
@@ -1730,6 +1733,8 @@ contains
              endif
           endif
        enddo
+
+
        ! now allocate datastructure for atoms within cutoff distance
        ! allocate data structure to store data for these neighbors
        call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff , n_cutoff, size_vdw_parameter )
@@ -1738,6 +1743,7 @@ contains
 
        ! now calculate pairwise forces and energies for this atom and its neighbors
        ! all of these subroutines should vectorize...
+
        call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr, pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )
        call pairwise_real_space_LJ( E_vdw_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr, pairwise_neighbor_data_cutoff%dr2 , pairwise_neighbor_data_cutoff%atype_vdw_parameter )
 

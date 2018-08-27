@@ -331,9 +331,24 @@ contains
        single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) + f_ji(:) - f_kj(:)
        single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:) - f_lk(:)
        single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) + f_lk(:)
+        
+       !****************test code*************
+      ! write(*,*) i_dihedral
+      ! write(*,*) E_dihedral_ijkl, "Current dihedral energy"
+      ! write(*,*) E_dihedral, "Total energy"
+      ! write(*,*) single_molecule_data%force(:,i_atom)*10,i_atom
+      ! write(*,*) single_molecule_data%force(:,j_atom)*10,j_atom
+      ! write(*,*) single_molecule_data%force(:,k_atom)*10,k_atom
+      ! write(*,*) single_molecule_data%force(:,l_atom)*10,l_atom
 
+      ! write(*,*) single_molecule_data%force(:,:)  
+!       write(*,*) E_dihedral, "Total energy"
+!       do i=1, 13
+!         write(*,*) "Total force", single_molecule_data%force(:,i)
+!       enddo
+       
+       !****************end test**************
     enddo
-
 
   end subroutine intra_molecular_dihedral_energy_force
 
@@ -354,6 +369,7 @@ contains
     real*8 :: a_dot_b , a_dot_a , b_dot_b, xi, xi0, kxi, cosine, cosine2
     real*8 :: sqrt_a_dot_a, sqrt_b_dot_b
     real*8 :: dot_rkj_rji , dot_rlk_rkj , dot_rlk_rji, fac
+    real*8 :: c0, c1, c2, c3, c4, c5
     real*8, dimension(3) :: d_a_dot_b_drji , d_a_dot_b_drkj , d_a_dot_b_drlk
     real*8, dimension(3) :: d_a_dot_a_drji , d_a_dot_a_drkj , d_a_dot_a_drlk
     real*8, dimension(3) :: d_b_dot_b_drji , d_b_dot_b_drkj , d_b_dot_b_drlk
@@ -491,13 +507,6 @@ contains
           fac = kxi * ( xi - xi0 ) / dsqrt(1d0 - cosine**2)
        end if
 
-!!$       if ( abs(fac) > 10d4 ) then
-!!$          write(*,*) "improper"
-!!$          write(*,*) fac
-!!$          write(*,*) xi, xi0
-!!$          write(*,*) cosine
-!!$          stop
-!!$       end if
 
        f_ji(:) = fac * ( d_a_dot_b_drji(:) / sqrt_a_dot_a  / sqrt_b_dot_b  &
             & - 0.5d0 * a_dot_b / a_dot_a**1.5d0 / sqrt_b_dot_b  * d_a_dot_a_drji(:) &
@@ -517,6 +526,44 @@ contains
           f_kj = -f_kj
           f_lk = -f_lk
        end if
+    Case(3)
+       !Calculate the Ryckaert-Bellemans dihedral potential.
+    
+       !6 Parameters for the Ryckaert-Bellemans cosine expansion
+       c0 = atype_dihedral_parameter(i_atom_type, j_atom_type,k_atom_type,l_atom_type,1)
+       c1 = atype_dihedral_parameter(i_atom_type, j_atom_type,k_atom_type,l_atom_type,2)
+       c2 = atype_dihedral_parameter(i_atom_type, j_atom_type,k_atom_type,l_atom_type,3)
+       c3 = atype_dihedral_parameter(i_atom_type, j_atom_type,k_atom_type,l_atom_type,4)
+       c4 = atype_dihedral_parameter(i_atom_type, j_atom_type,k_atom_type,l_atom_type,5)
+       c5 = atype_dihedral_parameter(i_atom_type, j_atom_type,k_atom_type,l_atom_type,6)
+
+       !Dihedral definition for Ryckaert-Bellemans is opposite that of the standard
+       !definition (cis dihedral angle is 0) and the angle is +180 compared to the 
+       !standard potential. This makes cosine equal to negative cosine. We adjust 
+       !this by putting a negative term in front of the odd-powered terms for the 
+       !energy function.
+
+
+       E_dihedral_ijkl = c0 - c1*cosine + c2*cosine**2 - c3*cosine**3 + &
+       c4*cosine**4 - c5*cosine**5
+
+       !force
+
+       fac = c1 - 2d0*c2*cosine + 3d0*c3*cosine**2-4d0*c4* &
+            & cosine**3 + 5d0*c5*cosine**4
+
+       f_ji(:) = fac * ( d_a_dot_b_drji(:) / sqrt_a_dot_a  / sqrt_b_dot_b  &
+            & - 0.5d0 * a_dot_b / a_dot_a**1.5d0 / sqrt_b_dot_b  *d_a_dot_a_drji(:) &
+            & - 0.5d0 * a_dot_b / sqrt_a_dot_a  / b_dot_b**1.5d0 *d_b_dot_b_drji(:) )
+
+       f_kj(:) = fac * ( d_a_dot_b_drkj(:) / sqrt_a_dot_a  / sqrt_b_dot_b  &
+            & - 0.5d0 * a_dot_b / a_dot_a**1.5d0 / sqrt_b_dot_b  *d_a_dot_a_drkj(:) &
+            & - 0.5d0 * a_dot_b / sqrt_a_dot_a  / b_dot_b**1.5d0 *d_b_dot_b_drkj(:) )
+       
+       f_lk(:) = fac * ( d_a_dot_b_drlk(:) / sqrt_a_dot_a  / sqrt_b_dot_b  &
+            & - 0.5d0 * a_dot_b / a_dot_a**1.5d0 / sqrt_b_dot_b  *d_a_dot_a_drlk(:) &
+            & - 0.5d0 * a_dot_b / sqrt_a_dot_a  / b_dot_b**1.5d0 *d_b_dot_b_drlk(:) )
+
 
     End Select
 
@@ -528,8 +575,8 @@ contains
   ! This subroutine generates an exclusions list
   ! "pair_exclusions" for every molecule type
   ! for intra-molecular non-bonded interactions
-  ! based on the setting of n_excl global variable parameter
-  ! atom pairs connected by n_excl bonds or less will be
+  ! based on the setting of n_exclusions global variable parameter
+  ! atom pairs connected by n_exclusions bonds or less will be
   ! excluded
   ! exclusions will be marked with a "1"
   !
@@ -552,11 +599,11 @@ contains
 
     write(*,*) ""
     write(*,*) "automatically generating exclusions for intra-molecular non-bonded"
-    write(*,*) "interactions that are within ", n_excl, " bonds away"
+    write(*,*) "interactions that are within ", n_exclusions, " bonds away"
     write(*,*) ""
 
     ! if 1-4 are not excluded ( 3 bonds away ), we want to label these specially
-    max_search = max( n_excl , 3 )
+    max_search = max( n_exclusions , 3 )
 
     ! this array keeps a list of all atoms along the bonding trajectory, so that we don't loop back over an atom
     allocate( bond_trajectory( max_search+1 ) )
@@ -613,7 +660,7 @@ contains
           ! make sure we are not doubling back on bonding trajectory
           flag = check_list( bond_trajectory , n_bonds_in , local_atom )
           if ( flag == 0 ) then
-             if ( ( n_bonds_in == 3 ) .and. ( n_excl < 3 ) .and. ( molecule_type_data(i_molecule_type)%pair_exclusions(i_atom, local_atom) /= 1 ) ) then
+             if ( ( n_bonds_in == 3 ) .and. ( n_exclusions < 3 ) .and. ( molecule_type_data(i_molecule_type)%pair_exclusions(i_atom, local_atom) /= 1 ) ) then
                 ! this is a 1-4 interaction, label this separately, unless 1-4 are excluded, or we
                 ! have explicitly read this in as an exclusion
                 molecule_type_data(i_molecule_type)%pair_exclusions(i_atom, local_atom) = 2
@@ -944,7 +991,7 @@ contains
     character(300) :: input_string
     character(20),dimension(max_param)::args
     character(MAX_ANAME) :: atomtype1, atomtype2, atomtype3, atomtype4
-    real*8 :: xi0, kxi, n_mult
+    real*8 :: xi0, kxi, n_mult, c0, c1, c2, c3, c4, c5
     integer :: index1, index2, index3,index4,  dihedral_type
 
     ! initialize to zero as a check that we have read in specific bond types
@@ -984,7 +1031,35 @@ contains
        read(args(5),*) dihedral_type
        atype_dihedral_type( index1, index2, index3, index4 ) = dihedral_type
        atype_dihedral_type( index4, index3, index2, index1 ) = dihedral_type
+       
 
+
+       Select Case(dihedral_type)
+       !For RB potential
+       Case(3) 
+       read(args(6),*) c0
+       read(args(7),*) c1
+       read(args(8),*) c2
+       read(args(9),*) c3
+       read(args(10),*) c4
+       read(args(11),*) c5
+       
+       ! store dihedral parameters for these atomtypes
+       atype_dihedral_parameter(index1,index2,index3,index4,1) = c0
+       atype_dihedral_parameter(index1,index2,index3,index4,2) = c1
+       atype_dihedral_parameter(index1,index2,index3,index4,3) = c2
+       atype_dihedral_parameter(index1,index2,index3,index4,4) = c3
+       atype_dihedral_parameter(index1,index2,index3,index4,5) = c4
+       atype_dihedral_parameter(index1,index2,index3,index4,6) = c5
+       ! transpose
+       atype_dihedral_parameter(index4,index3,index2,index1,1) = c0
+       atype_dihedral_parameter(index4,index3,index2,index1,2) = c1
+       atype_dihedral_parameter(index4,index3,index2,index1,3) = c2
+       atype_dihedral_parameter(index4,index3,index2,index1,4) = c3
+       atype_dihedral_parameter(index4,index3,index2,index1,5) = c4
+       atype_dihedral_parameter(index4,index3,index2,index1,6) = c5
+
+       Case default
        read(args(6),*) xi0
        read(args(7),*) kxi
 
@@ -997,6 +1072,7 @@ contains
        ! transpose
        atype_dihedral_parameter(index4,index3,index2,index1,1) = xi0
        atype_dihedral_parameter(index4,index3,index2,index1,2) = kxi
+       End Select
 
        ! for proper dihedral, we also need multiplicity
        Select Case(dihedral_type)
@@ -1005,7 +1081,7 @@ contains
           atype_dihedral_parameter(index1,index2,index3,index4,3) = n_mult
           atype_dihedral_parameter(index4,index3,index2,index1,3) = n_mult
        End Select
-
+       
     end do
 
 
@@ -1347,19 +1423,18 @@ contains
              k_type = molecule_type_data(i_mole_type)%atom_type_index(k_atom)
              l_type = molecule_type_data(i_mole_type)%atom_type_index(l_atom)
 
-             ! check force constant for proper, improper (not RB)
              Select Case(atype_dihedral_type( i_type , j_type, k_type, l_type ))
              Case(3)
                 continue
              case default
-             if ( atype_dihedral_parameter(i_type,j_type,k_type,l_type,2) < small ) then
-                write(*,*) ""
-                write(*,*) "Must have reasonable force constant for dihedral potential"
-                write(*,*) "between atomtypes ", atype_name(i_type), atype_name(j_type), atype_name(k_type), atype_name(l_type) 
-                write(*,*) ""
-                stop
-             end if
-             End Select
+                if ( atype_dihedral_parameter(i_type,j_type,k_type,l_type,2) < small ) then
+                   write(*,*) ""
+                   write(*,*) "Must have reasonable force constant for dihedral potential"
+                   write(*,*) "between atomtypes ", atype_name(i_type), atype_name(j_type), atype_name(k_type), atype_name(l_type) 
+                   write(*,*) ""
+                   stop
+                end if
+             end Select
 
           end do
        end if

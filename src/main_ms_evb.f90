@@ -33,7 +33,6 @@ program main_ms_evb
   !***** Local variables
   integer :: i_step
 
-
   !********** initialize constants in global variables
   call initialize_constants( file_io_data , verlet_list_data , PME_data )
 

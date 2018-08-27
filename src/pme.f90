@@ -55,7 +55,6 @@ contains
     allocate(xyz_scale(3,total_atoms))
     call create_scaled_direct_coordinates(xyz_scale, atom_data%xyz, total_atoms, kk, K)
 
-
     !****************************timing**************************************!
     if(debug .eq. 1) then
        call date_and_time(date,time)

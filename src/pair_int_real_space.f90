@@ -22,6 +22,7 @@ module pair_int_real_space
       ! these are force field parameters needed for interactions
       real*8 , dimension(:)   , allocatable :: qi_qj   ! charge * charge
       real*8 , dimension(:,:) , allocatable :: atype_vdw_parameter
+      integer, dimension(:) , allocatable :: atype_vdw_type
     end type pairwise_neighbor_data_type
 
 contains
@@ -38,7 +39,7 @@ contains
        allocate( pairwise_neighbor_data%dr2(n_neighbors) )
        allocate( pairwise_neighbor_data%qi_qj(n_neighbors) )
        allocate( pairwise_neighbor_data%atype_vdw_parameter(size_vdw_parameter , n_neighbors) )
-
+       allocate( pairwise_neighbor_data%atype_vdw_type(n_neighbors) )
        ! zero forces
        pairwise_neighbor_data%f_ij=0d0
 
@@ -47,7 +48,7 @@ contains
 
     subroutine deallocate_pairwise_neighbor_data( pairwise_neighbor_data )
        type(pairwise_neighbor_data_type), intent(inout) ::  pairwise_neighbor_data
-       deallocate( pairwise_neighbor_data%atom_index , pairwise_neighbor_data%xyz , pairwise_neighbor_data%dr , pairwise_neighbor_data%f_ij , pairwise_neighbor_data%dr2 , pairwise_neighbor_data%qi_qj ,  pairwise_neighbor_data%atype_vdw_parameter )
+       deallocate( pairwise_neighbor_data%atom_index , pairwise_neighbor_data%xyz , pairwise_neighbor_data%dr , pairwise_neighbor_data%f_ij , pairwise_neighbor_data%dr2 , pairwise_neighbor_data%qi_qj ,  pairwise_neighbor_data%atype_vdw_parameter, pairwise_neighbor_data%atype_vdw_type )
     end subroutine deallocate_pairwise_neighbor_data
 
 
@@ -99,6 +100,8 @@ contains
     endif
     !***********************************************************************!
 
+    write(*,*) "VDWs before intra ", system_data%E_vdw
+
 
     !******************************** intra-molecular real-space interactions *******************************
     do i_mole=1,system_data%n_mole
@@ -116,6 +119,8 @@ contains
     enddo
 
 
+    write(*,*) "VDWs after intra ", system_data%E_vdw
+
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -123,8 +128,6 @@ contains
        write(*,*) "real space energy and force calculation finished at", time
     endif
     !***********************************************************************!
-
-
   end subroutine  real_space_energy_force
 
 
@@ -154,12 +157,12 @@ contains
     real*8, dimension(3,size(atom_data%force(1,:))) :: local_force
     real*8, dimension(3,size(atom_data%force(1,:)),n_threads) :: temp_force
 
-    Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_verlet , pairwise_neighbor_data_cutoff
+    Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_verlet , pairwise_neighbor_data_cutoff_lj, pairwise_neighbor_data_cutoff_sapt, pairwise_neighbor_data_cutoff
 
-    integer , dimension(:) , allocatable    :: cutoff_mask
+    integer , dimension(:) , allocatable    :: cutoff_mask_lj, cutoff_mask_sapt, cutoff_mask
     real*8, dimension(3,3)   :: box, xyz_to_box_transform
-    real*8                   :: real_space_cutoff2, alpha_sqrt, erf_factor, E_elec, E_vdw, E_elec_local , E_vdw_local
-    integer                  :: split_do, total_atoms, n_neighbors, n_cutoff, size_vdw_parameter
+    real*8                   :: real_space_cutoff2, alpha_sqrt, erf_factor, E_elec, E_vdw, E_elec_local , E_vdw_local_lj, E_vdw_local_sapt
+    integer                  :: split_do, total_atoms, n_neighbors, n_cutoff_lj, n_cutoff_sapt, n_cutoff,  size_vdw_parameter
     integer :: i, i_atom, j_atom, thread_id, i_thread, verlet_start, verlet_finish, i_index
     real*8, dimension(3)     :: xyz_i_atom(3)
 
@@ -190,29 +193,26 @@ contains
 
     !**************************************** use Verlet list ****************************************************************
     call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, size_vdw_parameter, erf_factor, alpha_sqrt,verlet_list_data, PME_data, constants) REDUCTION(+:E_elec,E_vdw)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, atype_vdw_type, size_vdw_parameter, erf_factor, alpha_sqrt,verlet_list_data, PME_data, constants, Tang_Toennies_table, dTang_Toennies_table) REDUCTION(+:E_elec,E_vdw)
     !$OMP CRITICAL
     local_force = 0.D0
     !$OMP END CRITICAL
     !$OMP DO SCHEDULE(DYNAMIC,split_do)
     ! note that in Verlet list, neighbors are only stored if j_atom > i_atom , for efficiency and to avoid double counting
     do i_atom=1 , total_atoms
-
        xyz_i_atom(:) = atom_data%xyz(:,i_atom)
 
        verlet_start = verlet_list_data%verlet_point(i_atom)
        i_index = i_atom + 1
        verlet_finish = verlet_list_data%verlet_point(i_index) - 1
        n_neighbors = verlet_finish - verlet_start + 1
-
        ! make sure there's at least one neighbor
        if ( n_neighbors > 0 ) then
-
           ! allocate data structure to store data for these neighbors
           call allocate_pairwise_neighbor_data( pairwise_neighbor_data_verlet , n_neighbors, size_vdw_parameter )
           
           ! group neighbor coordinates and parameters sequentially in array for vectorization
-          call gather_neighbor_data( i_atom, verlet_start , verlet_finish , verlet_list_data%neighbor_list, pairwise_neighbor_data_verlet, atom_data%xyz, atom_data%charge, atom_data%atom_type_index, atype_vdw_parameter )
+          call gather_neighbor_data( i_atom, verlet_start , verlet_finish , verlet_list_data%neighbor_list, pairwise_neighbor_data_verlet, atom_data%xyz, atom_data%charge, atom_data%atom_type_index, atype_vdw_parameter, atype_vdw_type )
 
           ! this loop should now perfectly vectorize...
           ! $omp simd
@@ -239,52 +239,90 @@ contains
           ! $omp end simd
 
           ! now check cutoff, and re-organize data structures
-          allocate( cutoff_mask(n_neighbors) )
+          allocate( cutoff_mask_lj(n_neighbors), cutoff_mask_sapt(n_neighbors), cutoff_mask(n_neighbors) )
+          cutoff_mask_lj=0
+          cutoff_mask_sapt=0
           cutoff_mask=0
           ! $omp simd
           do j_atom = 1 , n_neighbors
              if ( pairwise_neighbor_data_verlet%dr2(j_atom) < real_space_cutoff2 ) then
-                cutoff_mask(j_atom) = 1
+                cutoff_mask(j_atom)=1
+                Select Case(pairwise_neighbor_data_verlet%atype_vdw_type(j_atom))
+                Case(0)
+                cutoff_mask_lj(j_atom)=1
+                Case(1)
+                cutoff_mask_sapt(j_atom)=1
+                End Select
              endif
           enddo
           ! $omp end simd
+          n_cutoff_lj = sum(cutoff_mask_lj)
+          n_cutoff_sapt = sum(cutoff_mask_sapt)
           n_cutoff = sum(cutoff_mask)
 
           ! now allocate datastructure for atoms within cutoff distance
           ! allocate data structure to store data for these neighbors
-          call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff , n_cutoff, size_vdw_parameter )
-          
+          call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff_lj , n_cutoff_lj, size_vdw_parameter )
+          call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff_sapt, n_cutoff_sapt, size_vdw_parameter )
+          call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff, n_cutoff, size_vdw_parameter )          
           ! transfer data from pairwise_neighbor_data_verlet to
           ! pairwise_neighbor_data_cutoff using cutoff_mask
           call apply_cutoff_mask( n_neighbors, pairwise_neighbor_data_cutoff, pairwise_neighbor_data_verlet, cutoff_mask )
+          call apply_cutoff_mask( n_neighbors, pairwise_neighbor_data_cutoff_lj, pairwise_neighbor_data_verlet, cutoff_mask_lj )
+          call apply_cutoff_mask( n_neighbors, pairwise_neighbor_data_cutoff_sapt, pairwise_neighbor_data_verlet, cutoff_mask_sapt )
+
 
           ! deallocate old arrays that we don't need anymore
           call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_verlet )
-          deallocate( cutoff_mask )
-
+          deallocate( cutoff_mask_lj,cutoff_mask_sapt, cutoff_mask )
 
           ! now calculate pairwise forces and energies for this atom and its neighbors         
           ! all of these subroutines should vectorize...
-          call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,  pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )  
-          call pairwise_real_space_LJ( E_vdw_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr, pairwise_neighbor_data_cutoff%dr2 ,  pairwise_neighbor_data_cutoff%atype_vdw_parameter )
- 
+          if ( n_cutoff > 0 ) then
+             call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,  pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )  
+          else
+             E_elec_local = 0d0
+          endif
+          if ( n_cutoff_lj > 0 ) then
+             call pairwise_real_space_LJ( E_vdw_local_lj , pairwise_neighbor_data_cutoff_lj%f_ij ,  pairwise_neighbor_data_cutoff_lj%dr, pairwise_neighbor_data_cutoff_lj%dr2 ,  pairwise_neighbor_data_cutoff_lj%atype_vdw_parameter )
+          else
+             E_vdw_local_lj = 0d0
+          end if
+          if ( n_cutoff_sapt > 0 ) then
+             call pairwise_real_space_sapt( E_vdw_local_sapt, pairwise_neighbor_data_cutoff_sapt%f_ij, pairwise_neighbor_data_cutoff_sapt%dr,pairwise_neighbor_data_cutoff_sapt%dr2, pairwise_neighbor_data_cutoff_sapt%atype_vdw_parameter, Tang_Toennies_table, dTang_Toennies_table, Tang_Toennies_max, Tang_Toennies_grid )
+          else
+             E_vdw_local_sapt = 0d0
+          end if
 
           E_elec = E_elec + E_elec_local
-          E_vdw  = E_vdw  + E_vdw_local
-
+          E_vdw  = E_vdw  + E_vdw_local_lj
+          E_vdw  = E_vdw  + E_vdw_local_sapt
 
           ! running addition of forces...
+          do i_index=1, n_cutoff_lj
+             j_atom = pairwise_neighbor_data_cutoff_lj%atom_index(i_index)
+             local_force(:,i_atom) =  local_force(:,i_atom) + pairwise_neighbor_data_cutoff_lj%f_ij(:,i_index)
+             local_force(:,j_atom) =  local_force(:,j_atom) - pairwise_neighbor_data_cutoff_lj%f_ij(:,i_index) 
+          enddo
+          do i_index=1, n_cutoff_sapt
+             j_atom = pairwise_neighbor_data_cutoff_sapt%atom_index(i_index)
+             local_force(:,i_atom) =  local_force(:,i_atom) + pairwise_neighbor_data_cutoff_sapt%f_ij(:,i_index)
+             local_force(:,j_atom) =  local_force(:,j_atom) - pairwise_neighbor_data_cutoff_sapt%f_ij(:,i_index)
+          enddo
           do i_index=1, n_cutoff
              j_atom = pairwise_neighbor_data_cutoff%atom_index(i_index)
              local_force(:,i_atom) =  local_force(:,i_atom) + pairwise_neighbor_data_cutoff%f_ij(:,i_index)
-             local_force(:,j_atom) =  local_force(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,i_index) 
+             local_force(:,j_atom) =  local_force(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,i_index)
           enddo
-
           ! deallocate old arrays that we don't need anymore
-          call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff)
+          call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff )
+          call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff_lj )
+          call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff_sapt )
          
        end if
+
     end do
+    
 
     !$OMP END DO NOWAIT
     thread_id = OMP_GET_THREAD_NUM()
@@ -298,14 +336,13 @@ contains
 
     system_data%E_elec = system_data%E_elec + E_elec
     system_data%E_vdw = system_data%E_vdw + E_vdw
-
-
+    
     contains
 
 
 
     !***** this subroutine gathers neighbor data from global atom_data array using the Verlet neighbor list
-    subroutine gather_neighbor_data( i_atom, verlet_start , verlet_finish , neighbor_list, pairwise_neighbor_data, xyz, charge, atom_type_index, atype_vdw_parameter )
+    subroutine gather_neighbor_data( i_atom, verlet_start , verlet_finish , neighbor_list, pairwise_neighbor_data, xyz, charge, atom_type_index, atype_vdw_parameter, atype_vdw_type )
        integer, intent(in) :: i_atom , verlet_start, verlet_finish
        integer, dimension(:), intent(in) :: neighbor_list
        type(pairwise_neighbor_data_type),intent(inout) :: pairwise_neighbor_data
@@ -313,6 +350,7 @@ contains
        real*8, dimension(:)   , intent(in) :: charge
        integer, dimension(:) , intent(in)  :: atom_type_index
        real*8, dimension(:,:,:) , intent(in) :: atype_vdw_parameter
+       integer, dimension(:,:) , intent(in)  :: atype_vdw_type
 
        integer :: j_verlet, j_atom, i_type, j_type, j_index
        real*8  :: q_i , q_j
@@ -333,6 +371,7 @@ contains
            pairwise_neighbor_data%xyz(:,j_index) = xyz(:,j_atom)
            pairwise_neighbor_data%qi_qj(j_index) = q_i * q_j
            pairwise_neighbor_data%atype_vdw_parameter(:,j_index) = atype_vdw_parameter(i_type,j_type,:)
+           pairwise_neighbor_data%atype_vdw_type(j_index) = atype_vdw_type(i_type,j_type)
 
            j_index = j_index + 1
        end do
@@ -342,12 +381,6 @@ contains
    
 
   end subroutine pairwise_real_space_verlet
-
-
-
-
-
-
 
 
   !*******************************************
@@ -372,70 +405,104 @@ contains
     integer, intent(in)    ::   i_mole_type, n_atom    
 
     ! we use two data structures, one for excluded interactions and one for non-excluded interactions
-    Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_excluded , pairwise_neighbor_data_nonexcluded
+    Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_excluded , pairwise_neighbor_data_nonexcluded, pairwise_neighbor_data_nonexcluded_lj, pairwise_neighbor_data_nonexcluded_sapt
 
     integer :: i_atom, j_atom, i_type, j_type, i_index
-    integer :: index_excluded, index_nonexcluded, n_excluded, n_nonexcluded, size_vdw_parameter
-    real*8 :: alpha_sqrt , erf_factor, E_elec_local, E_vdw_local 
+    integer :: index_excluded, index_nonexcluded, index_nonexcluded_sapt, index_nonexcluded_lj, n_excluded, n_nonexcluded, n_nonexcluded_lj, n_nonexcluded_sapt, size_vdw_parameter
+    real*8 :: alpha_sqrt , erf_factor, E_elec_local, E_vdw_local, E_vdw_local_lj, E_vdw_local_sapt
 
     alpha_sqrt           = PME_data%alpha_sqrt
     erf_factor           =  2.D0*alpha_sqrt/constants%pi_sqrt
     ! this is (maximum) number of parameters that we need for VDWs interaction
     size_vdw_parameter=size(atype_vdw_parameter(1,1,:))
-
+    
 
     ! by convention, molecules are not broken up over pbc, so we don't need to
     ! consider shift or minimum image for these intra-molecular interactions
 
-
-    do i_atom=1, n_atom-1
+    do i_atom=1, n_atom
+       i_type = single_molecule_data%atom_type_index(i_atom)
 
        n_excluded=0
        n_nonexcluded=0
+       n_nonexcluded_lj=0
+       n_nonexcluded_sapt=0
        E_elec_local=0d0
        E_vdw_local=0d0
-
+       E_vdw_local_sapt=0d0
+       E_vdw_local_lj=0d0
+       
        ! get number of exclusions, non-exclusions between this and rest of atoms in molecule
        do j_atom = i_atom + 1, n_atom
-
+          j_type = single_molecule_data%atom_type_index(j_atom)
           if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom, j_atom ) /= 1 ) then
              n_nonexcluded = n_nonexcluded + 1  ! not excluded
+             Select Case( atype_vdw_type(i_type,j_type) )
+             Case(0)
+               n_nonexcluded_lj=n_nonexcluded_lj+1
+             Case(1)
+               n_nonexcluded_sapt=n_nonexcluded_sapt+1
+             End Select
           else
              n_excluded = n_excluded + 1    ! excluded
           end if
        enddo
-
        ! allocate data structures for excluded/non-excluded interactions
        if ( n_excluded > 0 ) then
            call allocate_pairwise_neighbor_data( pairwise_neighbor_data_excluded , n_excluded, size_vdw_parameter )       
        endif
        if ( n_nonexcluded > 0 ) then
-           call allocate_pairwise_neighbor_data( pairwise_neighbor_data_nonexcluded , n_nonexcluded, size_vdw_parameter )
+           call allocate_pairwise_neighbor_data( pairwise_neighbor_data_nonexcluded, n_nonexcluded, size_vdw_parameter ) 
+           call allocate_pairwise_neighbor_data( pairwise_neighbor_data_nonexcluded_lj, n_nonexcluded_lj, size_vdw_parameter )
+           call allocate_pairwise_neighbor_data(  pairwise_neighbor_data_nonexcluded_sapt, n_nonexcluded_sapt, size_vdw_parameter )
        endif
 
-       i_type = single_molecule_data%atom_type_index(i_atom)
+
        ! now loop over atoms and fill in data structures
        index_excluded=1
        index_nonexcluded=1
+       index_nonexcluded_sapt=1
+       index_nonexcluded_lj=1
        do j_atom = i_atom + 1, n_atom
           j_type = single_molecule_data%atom_type_index(j_atom)
 
           if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom, j_atom ) /= 1 ) then  
-              ! nonexcluded            
+              ! nonexcluded, separate structures needed for sapt and lj
+              ! interactions        
               pairwise_neighbor_data_nonexcluded%atom_index(index_nonexcluded) = j_atom
               pairwise_neighbor_data_nonexcluded%dr(:,index_nonexcluded) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
-              pairwise_neighbor_data_nonexcluded%qi_qj(index_nonexcluded)= single_molecule_data%charge(i_atom) * single_molecule_data%charge(j_atom)
+              pairwise_neighbor_data_nonexcluded%qi_qj(index_nonexcluded) = single_molecule_data%charge(i_atom) * single_molecule_data%charge(j_atom)
               pairwise_neighbor_data_nonexcluded%dr2(index_nonexcluded) = dot_product( pairwise_neighbor_data_nonexcluded%dr(:,index_nonexcluded), pairwise_neighbor_data_nonexcluded%dr(:,index_nonexcluded) )
-              ! at this stage, all lj parameters should be expressed as C12
-              ! and C6, even though they were read in as epsilon and sigma
-              ! if this is a 1-4 interaction, take parameters from 1-4
-              ! interaction parameter array
-              if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom , j_atom ) == 2 ) then
-                 pairwise_neighbor_data_nonexcluded%atype_vdw_parameter(:,index_nonexcluded) = atype_vdw_parameter_14(i_type,j_type,:)
-              else
-                 pairwise_neighbor_data_nonexcluded%atype_vdw_parameter(:,index_nonexcluded) = atype_vdw_parameter(i_type,j_type,:)
-              end if
+
+              Select Case(atype_vdw_type(i_type,j_type))
+              Case(0)
+              ! LJ interaction
+                 pairwise_neighbor_data_nonexcluded_lj%atom_index(index_nonexcluded_lj) = j_atom
+                 pairwise_neighbor_data_nonexcluded_lj%dr(:,index_nonexcluded_lj) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
+                 pairwise_neighbor_data_nonexcluded_lj%qi_qj(index_nonexcluded_lj) = single_molecule_data%charge(i_atom) * single_molecule_data%charge(j_atom)
+                 pairwise_neighbor_data_nonexcluded_lj%dr2(index_nonexcluded_lj) = dot_product( pairwise_neighbor_data_nonexcluded_lj%dr(:,index_nonexcluded_lj), pairwise_neighbor_data_nonexcluded_lj%dr(:,index_nonexcluded_lj) )
+              ! at this stage, all lj parameters should be expressed as C12 and C6, even though they were read in as epsilon and sigma
+              ! if this is a 1-4 interaction, take parameters from 1-4 interaction parameter array
+                 if ( molecule_type_data(i_mole_type)%pair_exclusions( i_atom , j_atom ) == 2 ) then
+                     pairwise_neighbor_data_nonexcluded_lj%atype_vdw_parameter(:,index_nonexcluded_lj) = atype_vdw_parameter_14(i_type,j_type,:)
+                 else
+                     pairwise_neighbor_data_nonexcluded_lj%atype_vdw_parameter(:,index_nonexcluded_lj) = atype_vdw_parameter(i_type,j_type,:)
+                 end if
+                 index_nonexcluded_lj=index_nonexcluded_lj+1
+
+              Case(1)
+              ! SAPT-FF interaction
+                 pairwise_neighbor_data_nonexcluded_sapt%atom_index(index_nonexcluded_sapt) = j_atom
+                 pairwise_neighbor_data_nonexcluded_sapt%dr(:,index_nonexcluded_sapt) = single_molecule_data%xyz(:,i_atom) - single_molecule_data%xyz(:,j_atom)
+                 pairwise_neighbor_data_nonexcluded_sapt%qi_qj(index_nonexcluded_sapt) = single_molecule_data%charge(i_atom) * single_molecule_data%charge(j_atom)
+                 pairwise_neighbor_data_nonexcluded_sapt%dr2(index_nonexcluded_sapt) = dot_product(pairwise_neighbor_data_nonexcluded_sapt%dr(:,index_nonexcluded_sapt), pairwise_neighbor_data_nonexcluded_sapt%dr(:,index_nonexcluded_sapt) )
+                 pairwise_neighbor_data_nonexcluded_sapt%atype_vdw_parameter(:,index_nonexcluded_sapt) = atype_vdw_parameter(i_type,j_type,:)
+                 index_nonexcluded_sapt=index_nonexcluded_sapt+1
+
+              End Select
+
               index_nonexcluded = index_nonexcluded + 1
+
            else
            ! excluded, don't need data structures for VDWs interaction, just electrostatics
               pairwise_neighbor_data_excluded%atom_index(index_excluded) = j_atom 
@@ -454,13 +521,23 @@ contains
            
        ! now add non-excluded intra-molecular real-space electrostatic and VDWs interactions
        if ( n_nonexcluded > 0 ) then
-
            call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_nonexcluded%f_ij ,  pairwise_neighbor_data_nonexcluded%dr, pairwise_neighbor_data_nonexcluded%dr2,  pairwise_neighbor_data_nonexcluded%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )
-           call pairwise_real_space_LJ( E_vdw_local , pairwise_neighbor_data_nonexcluded%f_ij ,  pairwise_neighbor_data_nonexcluded%dr, pairwise_neighbor_data_nonexcluded%dr2 , pairwise_neighbor_data_nonexcluded%atype_vdw_parameter )
-           E_elec = E_elec + E_elec_local
-           E_vdw  = E_vdw  + E_vdw_local
-       endif
+           if ( n_nonexcluded_lj > 0 ) then
+               call pairwise_real_space_LJ( E_vdw_local_lj , pairwise_neighbor_data_nonexcluded_lj%f_ij ,  pairwise_neighbor_data_nonexcluded_lj%dr, pairwise_neighbor_data_nonexcluded_lj%dr2 , pairwise_neighbor_data_nonexcluded_lj%atype_vdw_parameter )
+           else
+               E_vdw_local_lj = 0d0
+           end if
+           if ( n_nonexcluded_sapt > 0 ) then
+               call pairwise_real_space_sapt( E_vdw_local_sapt, pairwise_neighbor_data_nonexcluded_sapt%f_ij, pairwise_neighbor_data_nonexcluded_sapt%dr, pairwise_neighbor_data_nonexcluded_sapt%dr2, pairwise_neighbor_data_nonexcluded_sapt%atype_vdw_parameter, Tang_Toennies_table, dTang_Toennies_table, Tang_Toennies_max, Tang_Toennies_grid )
+           else
+               E_vdw_local_sapt = 0d0
+           end if
 
+           E_elec = E_elec + E_elec_local
+           E_vdw  = E_vdw  + E_vdw_local_lj
+           E_vdw  = E_vdw  + E_vdw_local_sapt
+       endif
+        
        ! add forces from exclusions...
        do i_index=1, n_excluded
            j_atom = pairwise_neighbor_data_excluded%atom_index(i_index)
@@ -475,21 +552,31 @@ contains
            force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_nonexcluded%f_ij(:,i_index)
        enddo
 
+       do i_index=1, n_nonexcluded_lj
+           j_atom = pairwise_neighbor_data_nonexcluded_lj%atom_index(i_index)
+           force_local(:,i_atom) = force_local(:,i_atom) + pairwise_neighbor_data_nonexcluded_lj%f_ij(:,i_index)
+           force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_nonexcluded_lj%f_ij(:,i_index)
+       enddo
+
+       do i_index=1, n_nonexcluded_sapt
+           j_atom = pairwise_neighbor_data_nonexcluded%atom_index(i_index)
+           force_local(:,i_atom) = force_local(:,i_atom) + pairwise_neighbor_data_nonexcluded_sapt%f_ij(:,i_index)
+           force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_nonexcluded_sapt%f_ij(:,i_index)
+       enddo
+       
 
        ! deallocate data structures
        if ( n_nonexcluded > 0 ) then
           call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_nonexcluded)
+          call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_nonexcluded_lj)
+          call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_nonexcluded_sapt)
        endif
        if ( n_excluded > 0 ) then
-          call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_excluded)
+          call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_excluded )
        endif
 
     enddo
-
-
   end subroutine intra_molecular_pairwise_energy_force
-
-
 
 
 
@@ -497,7 +584,7 @@ contains
     !structures and only keep the neighbor atoms within the cutoff distance
     subroutine apply_cutoff_mask( n_neighbors, pairwise_neighbor_data_cutoff, pairwise_neighbor_data_verlet, cutoff_mask )
       integer,intent(in) :: n_neighbors
-      type(pairwise_neighbor_data_type) , intent(inout) ::  pairwise_neighbor_data_cutoff
+      type(pairwise_neighbor_data_type) , intent(inout) :: pairwise_neighbor_data_cutoff
       type(pairwise_neighbor_data_type) ,  intent(in) ::  pairwise_neighbor_data_verlet
       integer, dimension(:), intent(in) :: cutoff_mask
 
@@ -507,11 +594,11 @@ contains
       do i_atom=1, n_neighbors
          if ( cutoff_mask(i_atom) == 1 ) then
             pairwise_neighbor_data_cutoff%dr(:,i_index) = pairwise_neighbor_data_verlet%dr(:,i_atom)
-            pairwise_neighbor_data_cutoff%dr2(i_index) =  pairwise_neighbor_data_verlet%dr2(i_atom)
+            pairwise_neighbor_data_cutoff%dr2(i_index) = pairwise_neighbor_data_verlet%dr2(i_atom)
             pairwise_neighbor_data_cutoff%qi_qj(i_index) = pairwise_neighbor_data_verlet%qi_qj(i_atom)
             pairwise_neighbor_data_cutoff%atype_vdw_parameter(:,i_index) = pairwise_neighbor_data_verlet%atype_vdw_parameter(:,i_atom)
             pairwise_neighbor_data_cutoff%atom_index(i_index) = pairwise_neighbor_data_verlet%atom_index(i_atom)
-         i_index = i_index + 1
+            i_index = i_index + 1
          endif
       enddo
 
@@ -550,7 +637,58 @@ contains
 
   end subroutine pairwise_real_space_LJ
 
+  !****************************************
+  !this subroutine uses the modified Buckingham potential
+  !from the SAPT force fields
+  !****************************************
+  subroutine pairwise_real_space_sapt ( E_vdw, f_ij, dr, dr2, lj_parameters, Tang_Toennies_table, dTang_Toennies_table, Tang_Toennies_max, Tang_Toennies_grid )
+    real*8, intent(out) :: E_vdw
+    real*8, dimension(:,:), intent(inout) :: f_ij
+    real*8, dimension(:), intent(in) :: dr2
+    real*8, dimension(:,:), intent(in) :: dr
+    real*8, dimension(:,:), intent(in) :: lj_parameters
+    real*8, dimension(:,:), intent(in) :: Tang_Toennies_table, dTang_Toennies_table
+    real*8, intent(in) :: Tang_Toennies_max
+    integer, intent(in) :: Tang_Toennies_grid
+    
+    
+    real*8, dimension(size(dr2)) :: dr6, dr12, dr1, dr10, dr8
+    real*8, dimension(4,size(dr2)) :: tt_table, dtt_table
+    integer :: i_atom
 
+     
+     ! $omp simd
+     dr6 = dr2**3
+     dr12 = dr6**2
+     ! dr1 needed for force computation
+     dr1 = dsqrt(dr2)
+     dr8 = dr6 * dr2
+     dr10 = dr8 * dr2
+
+
+     tt_table(1,:) = Tang_Toennies_table(1,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
+     tt_table(2,:) = Tang_Toennies_table(2,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
+     tt_table(3,:) = Tang_Toennies_table(3,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
+     tt_table(4,:) = Tang_Toennies_table(4,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
+
+     dtt_table(1,:) = lj_parameters(2,:) * dTang_Toennies_table(1,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
+     dtt_table(2,:) = lj_parameters(2,:) * dTang_Toennies_table(2,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
+     dtt_table(3,:) = lj_parameters(2,:) * dTang_Toennies_table(3,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
+     dtt_table(4,:) = lj_parameters(2,:) * dTang_Toennies_table(4,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid))) 
+     
+
+     E_vdw = sum(lj_parameters(1,:) * exp(-1*lj_parameters(2,:)*dr1(:)) - tt_table(1,:) * lj_parameters(3,:)/dr6(:) - tt_table(2,:) * lj_parameters(4,:)/dr8(:) - tt_table(3,:) * lj_parameters(5,:)/dr10(:) - tt_table(4,:) * lj_parameters(6,:)/dr12(:))
+
+    do i_atom=1, size(dr2)
+       f_ij(:,i_atom) = f_ij(:,i_atom) + dr(:,i_atom)/dr2(i_atom) * (dr1(i_atom)&
+*lj_parameters(1,i_atom) * lj_parameters(2,i_atom) * exp(-1*lj_parameters(2,i_atom) * dr1(i_atom)) + &
+dr1(i_atom) * dtt_table(1,i_atom) * lj_parameters(3,i_atom)/dr6(i_atom) - tt_table(1,i_atom) * 6d0 * lj_parameters(3,i_atom)/dr6(i_atom) + & 
+dr1(i_atom) * dtt_table(2,i_atom) * lj_parameters(4,i_atom)/dr8(i_atom) - tt_table(2,i_atom) * 8d0 * lj_parameters(4,i_atom)/dr8(i_atom) + &
+dr1(i_atom) * dtt_table(3,i_atom) * lj_parameters(5,i_atom)/dr10(i_atom) - tt_table(3,i_atom) * 10d0 * lj_parameters(5,i_atom)/dr10(i_atom) + &
+dr1(i_atom) * dtt_table(4,i_atom) * lj_parameters(6,i_atom)/dr12(i_atom) - tt_table(4,i_atom) * 12d0 * lj_parameters(6,i_atom)/dr12(i_atom))
+    enddo
+    ! $omp end simd
+  end subroutine pairwise_real_space_sapt
 
 
 
@@ -573,7 +711,6 @@ contains
      ! $omp simd
 
      dr_mag=sqrt(dr2)
-
      ! make array with values of the complementary error function applied to alpha_sqrt * distance
      erfc_value(:) = erfc_table(ceiling((dr_mag(:)*alpha_sqrt)/erfc_max*dble(erfc_grid)))
 
