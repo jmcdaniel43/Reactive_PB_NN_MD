@@ -326,28 +326,11 @@ contains
 
        E_dihedral = E_dihedral + E_dihedral_ijkl
 
-
        single_molecule_data%force(:,i_atom) = single_molecule_data%force(:,i_atom) - f_ji(:)
        single_molecule_data%force(:,j_atom) = single_molecule_data%force(:,j_atom) + f_ji(:) - f_kj(:)
        single_molecule_data%force(:,k_atom) = single_molecule_data%force(:,k_atom) + f_kj(:) - f_lk(:)
        single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) + f_lk(:)
         
-       !****************test code*************
-      ! write(*,*) i_dihedral
-      ! write(*,*) E_dihedral_ijkl, "Current dihedral energy"
-      ! write(*,*) E_dihedral, "Total energy"
-      ! write(*,*) single_molecule_data%force(:,i_atom)*10,i_atom
-      ! write(*,*) single_molecule_data%force(:,j_atom)*10,j_atom
-      ! write(*,*) single_molecule_data%force(:,k_atom)*10,k_atom
-      ! write(*,*) single_molecule_data%force(:,l_atom)*10,l_atom
-
-      ! write(*,*) single_molecule_data%force(:,:)  
-!       write(*,*) E_dihedral, "Total energy"
-!       do i=1, 13
-!         write(*,*) "Total force", single_molecule_data%force(:,i)
-!       enddo
-       
-       !****************end test**************
     enddo
 
   end subroutine intra_molecular_dihedral_energy_force

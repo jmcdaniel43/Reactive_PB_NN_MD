@@ -214,7 +214,6 @@ contains
 
    n_mole = 0
    do i = 1, total_atoms
-   !Changed to *, was originally '(I5,2A5,I5,3F8.3)'
       read( file_handle, '(I5,2A5,I5,3F8.3)' ), i_mole, mname, aname, junk, r_tmp(1), r_tmp(2), r_tmp(3)
       call trim_end( aname )
       if ( i_mole /= n_mole ) then
@@ -259,7 +258,6 @@ contains
    i_mole_prev = 0
    i_atom = 0
    do i = 1, total_atoms
-        !Changed to *, was originally '(I5,2A5,I5,3F8.3)' 
         read( file_handle, '(I5,2A5,I5,3F8.3)' ), i_mole, mname, atom_data%aname(i), junk, r_tmp(1), r_tmp(2), r_tmp(3)
         call trim_end( atom_data%aname(i) )
         if ( i_mole /= i_mole_prev ) then

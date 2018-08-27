@@ -100,8 +100,6 @@ contains
     endif
     !***********************************************************************!
 
-    write(*,*) "VDWs before intra ", system_data%E_vdw
-
 
     !******************************** intra-molecular real-space interactions *******************************
     do i_mole=1,system_data%n_mole
@@ -118,8 +116,6 @@ contains
        endif
     enddo
 
-
-    write(*,*) "VDWs after intra ", system_data%E_vdw
 
 
     !****************************timing**************************************!
