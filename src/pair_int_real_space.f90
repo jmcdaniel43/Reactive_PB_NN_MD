@@ -117,7 +117,6 @@ contains
     enddo
 
 
-
     !****************************timing**************************************!
     if(debug .eq. 1) then
        call date_and_time(date,time)
@@ -555,7 +554,7 @@ contains
        enddo
 
        do i_index=1, n_nonexcluded_sapt
-           j_atom = pairwise_neighbor_data_nonexcluded%atom_index(i_index)
+           j_atom = pairwise_neighbor_data_nonexcluded_sapt%atom_index(i_index)
            force_local(:,i_atom) = force_local(:,i_atom) + pairwise_neighbor_data_nonexcluded_sapt%f_ij(:,i_index)
            force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_nonexcluded_sapt%f_ij(:,i_index)
        enddo
@@ -623,6 +622,10 @@ contains
 
      ! at this stage, all lj parameters should be expressed as C12 and C6, even though they were read in as epsilon and sigma
      E_vdw = sum( lj_parameters(1,:) / dr12(:) - lj_parameters(2,:) / dr6(:) )
+     if (E_vdw /= E_vdw) then
+        write(*,*) E_vdw
+        write(*,*) lj_parameters
+     endif 
 
      ! this should vectorize...
      do i_atom=1,size(dr2)
@@ -660,7 +663,6 @@ contains
      dr1 = dsqrt(dr2)
      dr8 = dr6 * dr2
      dr10 = dr8 * dr2
-
 
      tt_table(1,:) = Tang_Toennies_table(1,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
      tt_table(2,:) = Tang_Toennies_table(2,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))

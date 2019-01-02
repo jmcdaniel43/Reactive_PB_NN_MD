@@ -326,6 +326,8 @@ contains
     ! HEADING 1: 'solute_species'  -- standard coulomb and LJ interactions
     ! HEADING 2: 'custom_sapt_parameters' -- SAPT-FF force field section
     ! HEADING 3: 'cross_terms'  -- Explicit cross terms for LJ interactions
+    ! HEADING 4: 'sapt_exclusions' -- We want water/hydronium to have SAPT
+    ! interactions with all other species, except between themselves
     ! note that there could also be another section called 'pairtypes' which is
     ! for custom 1-4 interactions, but this is read by a different subroutine
     do
@@ -525,7 +527,8 @@ contains
            call combination_rule_cross_terms(atype_vdw_parameter,i_param,i_param,lj_comb_rule, atype_vdw_type)
         end if
     enddo
-
+    
+    
     ! if Lorentz-Berthelot combination rules were used, we now  need to create C12 and C6 atomic and cross terms
     do i_param=1,n_atom_type
       do j_param=1,n_atom_type

@@ -94,8 +94,6 @@ contains
        write(*,*) "intra_molecular force and energy finished at", time
     endif
     !***********************************************************************!
-
-
     ! total potential energy of system
     system_data%potential_energy = system_data%E_elec + system_data%E_vdw + system_data%E_bond + system_data%E_angle + system_data%E_dihedral
 

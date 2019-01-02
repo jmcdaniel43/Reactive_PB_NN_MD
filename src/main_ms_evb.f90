@@ -49,6 +49,7 @@ program main_ms_evb
   Case("no")
      open( file_io_data%ofile_traj_file_h, file=file_io_data%ofile_traj, status='new' )
      open( file_io_data%ofile_log_file_h,  file=file_io_data%ofile_log, status='new' )
+     open( file_io_data%ofile_hamiltonian_file_h, file=file_io_data%ofile_hamiltonian, status='new' )
 !     Select Case( checkpoint_velocity )
 !     Case("yes")
         ! status may be new, or append to old

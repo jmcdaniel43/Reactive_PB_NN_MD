@@ -24,6 +24,7 @@ contains
     call getarg( 5, file_io_data%ofile_traj )
     call getarg( 6, file_io_data%ofile_log )
     call getarg( 7, file_io_data%ofile_hop )
+    call getarg( 8, file_io_data%ofile_hamiltonian )
 
   end subroutine sort_input_files
 
@@ -885,6 +886,42 @@ contains
 
   end subroutine print_simulation_info
 
+  subroutine print_hamiltonian_info( h_array, ground_state_eigenv, file_io_data )
+    use global_variables
+    ! Print Hamiltonian info if close to proton hop. The array is ordered
+    ! by descending value first, and then the Hamiltonian is printed.
+
+    real*8, dimension(:,:), intent(in) :: h_array
+    real*8, dimension(:), intent(in) :: ground_state_eigenv
+    type(file_io_data_type),intent(in) :: file_io_data
+
+    real*8, dimension(:), allocatable :: a
+    real*8, dimension(2) :: n
+    integer :: eigen_size, i, j, a1, h_size
+    
+    eigen_size = size(ground_state_eigenv)
+    allocate(a(eigen_size))
+    a = ground_state_eigenv
+    call SelectionSort(a) 
+
+    n = shape(h_array)
+    h_size = n(1)
+    a1 = size(a)
+    if (a(1) <= 0.74) then
+        if (a(2) >= 0.66) then
+            write(file_io_data%ofile_hamiltonian_file_h,*) "step ", trajectory_step
+            write(file_io_data%ofile_hamiltonian_file_h,*) "c1^2", a(1), "c2^2", a(2)
+            write(file_io_data%ofile_hamiltonian_file_h,*) ""
+            do i=1, h_size
+                do j=i, h_size
+                    write(file_io_data%ofile_hamiltonian_file_h,*) i,j, h_array(i,j)
+                    write(file_io_data%ofile_hamiltonian_file_h,*) ""
+                enddo
+            enddo 
+        endif    
+    endif 
+
+  end subroutine print_hamiltonian_info
 
   !**************************************************************************
   ! This subroutine print trajectory and energy info of step to trajectory file and log file
@@ -2050,7 +2087,7 @@ contains
        d(:)=b(:)
        z(:)=0.0
     end do
-
+    
     stop 'too many iterations in jacobi'
 
   CONTAINS
@@ -2065,6 +2102,35 @@ contains
 
   END SUBROUTINE jacobi
 
+  !************** sorting subroutine taken from
+  ! Fortran 90 for Engineers & Scientists, Nyhoff and Leestma
+  ! Some minor modifications were made for array type and 
+  ! to make this array descending order
+  SUBROUTINE SelectionSort(Item)
+
+    REAL*8, DIMENSION(:), INTENT(INOUT) :: Item
+
+    INTEGER :: NumItems, I, LocationLargest
+    REAL*8 :: LargestItem   
+    REAL*8, DIMENSION(1) :: MAXLOC_array
+
+    NumItems = SIZE(Item)
+    DO I = 1, NumItems - 1
+        ! Find largest item in the sublist
+        ! Item(I), ..., Item(NumItems)
+        
+        LargestItem = MAXVAL(Item(I:NumItems))
+        MAXLOC_array = MAXLOC(Item(I:NumItems))
+        LocationLargest = (I-1) + MAXLOC_array(1)
+
+        ! Interchange smallest item with Item(I) at
+        ! beginning of sublist\
+
+        Item(LocationLargest) = Item(I)
+        Item(I) = LargestItem
+    END DO
+    
+  END SUBROUTINE
 
 
   !************** some subroutines from numerical recipes, redefined here

@@ -332,7 +332,6 @@ contains
        single_molecule_data%force(:,l_atom) = single_molecule_data%force(:,l_atom) + f_lk(:)
         
     enddo
-
   end subroutine intra_molecular_dihedral_energy_force
 
 

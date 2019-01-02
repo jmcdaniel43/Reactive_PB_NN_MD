@@ -198,6 +198,7 @@ implicit none
   character(MAX_FN) :: ofile_traj
   character(MAX_FN) :: ofile_log
   character(MAX_FN) :: ofile_hop
+  character(MAX_FN) :: ofile_hamiltonian
   integer           :: ifile_gro_file_h  ! these are the file handles
   integer           :: ifile_ffpmt_file_h 
   integer           :: ifile_top_file_h 
@@ -206,6 +207,7 @@ implicit none
   integer           :: ofile_traj_file_h 
   integer           :: ofile_log_file_h 
   integer           :: ofile_hop_file_h 
+  integer           :: ofile_hamiltonian_file_h
  end type file_io_data_type
 
 
@@ -280,7 +282,6 @@ implicit none
   integer                              ::  i_atom, j_atom, k_atom, l_atom
  end type dihedral_list_type
 
-
   ! exclusions for intra-molecular interactions
   ! we could easily define molecule-type specific number of exclusions, if we
   ! need to do this, put n_exclusions in molecule_type_data data structure and define
@@ -321,6 +322,7 @@ implicit none
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,9) :: atype_vdw_tmp
   integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: atype_vdw_type
   real*8, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_vdw_parameter_14        ! this is same as atype_vdw_parameter array, but stores special values for 1-4 interactions as used in GROMOS-45a3 force field
+  integer, dimension(MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE) :: atype_sapt_exclusions !This structure identifies the H2O-H3O parameters that need to be zeroed out for SAPT interactions
   character(10)            :: lj_comb_rule            ! for lj, set to "opls" or "standard"== Lorentz-Berthelot, for bkghm, set to "standard" or "ZIFFF"
 ! intra-molecular bond, angle and dihedral data structures
   integer, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE)  :: atype_bond_type  ! stores type of bond, 1=harmonic, 2=GROMOS-96, 3=Morse
@@ -409,6 +411,7 @@ implicit none
   file_io_data%ofile_traj_file_h=95
   file_io_data%ofile_log_file_h=96
   file_io_data%ofile_hop_file_h=97
+  file_io_data%ofile_hamiltonian_file_h=98
 
 
   end subroutine initialize_constants
