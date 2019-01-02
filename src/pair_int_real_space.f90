@@ -622,10 +622,6 @@ contains
 
      ! at this stage, all lj parameters should be expressed as C12 and C6, even though they were read in as epsilon and sigma
      E_vdw = sum( lj_parameters(1,:) / dr12(:) - lj_parameters(2,:) / dr6(:) )
-     if (E_vdw /= E_vdw) then
-        write(*,*) E_vdw
-        write(*,*) lj_parameters
-     endif 
 
      ! this should vectorize...
      do i_atom=1,size(dr2)
