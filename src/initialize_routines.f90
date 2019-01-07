@@ -398,7 +398,6 @@ contains
 
        !******* Explicit Cross terms 
        ELSE IF ( ind3 .ne. 0 ) then
-          write(*,*) "HERE"
           read(file_h,*) n_cross
           if(n_cross > 0) then
              do i_param=1, n_cross
