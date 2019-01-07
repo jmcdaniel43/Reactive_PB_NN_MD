@@ -398,6 +398,7 @@ contains
 
        !******* Explicit Cross terms 
        ELSE IF ( ind3 .ne. 0 ) then
+          write(*,*) "HERE"
           read(file_h,*) n_cross
           if(n_cross > 0) then
              do i_param=1, n_cross
@@ -478,7 +479,6 @@ contains
              call gen_C12_C6_epsilon_sigma(atype_vdw_parameter,i_param,i_param)
           enddo
     End Select
-
     ! create cross terms first
     do i_param=1, n_atom_type
        do j_param=1, n_atom_type
@@ -511,6 +511,7 @@ contains
 
     ! now diagonal terms
     do i_param=1, n_atom_type
+      if (gen_cross_terms(i_param,i_param) .eq. 0) then
         if (atype_vdw_parameter(i_param,i_param,1) > small )  then
            ! LJ interaction    
            atype_vdw_type(i_param,i_param) = 0
@@ -526,6 +527,9 @@ contains
            ! we shouldn't be using ...
            call combination_rule_cross_terms(atype_vdw_parameter,i_param,i_param,lj_comb_rule, atype_vdw_type)
         end if
+      else
+          atype_vdw_type(i_param,i_param)=0
+     endif
     enddo
     
     
