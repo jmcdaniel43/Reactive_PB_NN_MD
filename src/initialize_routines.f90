@@ -40,20 +40,20 @@ contains
     ! allocate molecule_data array
     allocate( molecule_data(system_data%n_mole) )
 
-    ! now read gro file
     ! this call will fill in data structures atom_data and molecule_data
-    ! open gro file as we may need to scan to end if restarting...
-    open( file_io_data%ifile_gro_file_h, file=file_io_data%ifile_gro, status='old' )
 
     ! if trajectory restart, scan to end of .gro trajectory file...
+    ! this will allocate atom_data%aname, atom_data%xyz arrays
     Select Case( restart_trajectory )
     Case("yes")
-       call scan_grofile_restart( file_io_data%ifile_gro_file_h, n_old_trajectory )
-    End Select
-
-    ! this will allocate atom_data%aname, atom_data%xyz arrays
+       open( file_io_data%ofile_traj_file_h, file=file_io_data%ofile_traj, status='old' )
+       call scan_grofile_restart( file_io_data%ofile_traj_file_h, n_old_trajectory )
+       call read_gro( file_io_data%ofile_traj_file_h, system_data, molecule_data, atom_data )
+    Case default
+    open( file_io_data%ifile_gro_file_h, file=file_io_data%ifile_gro, status='old' )
     call read_gro( file_io_data%ifile_gro_file_h, system_data, molecule_data, atom_data )
-
+    close( file_io_data%ifile_gro_file_h )
+    End Select
     ! ******************  Allocate remainder of atom_data arrays, initialize
     total_atoms = system_data%total_atoms
     allocate( atom_data%velocity(3,total_atoms) )
@@ -488,7 +488,7 @@ contains
               ! this is Lennard-Jones interaction
               atype_vdw_type(i_param,j_param)=0
               call combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_comb_rule, atype_vdw_type)
-            else if ( atype_vdw_tmp(i_param,i_param,1) > small .and. atype_vdw_tmp(j_param,j_param,1) > small ) then
+            else if ( atype_vdw_tmp(i_param,i_param,5) > small .and. atype_vdw_tmp(j_param,j_param,5) > small ) then
               ! this is SAPT-FF interaction
               atype_vdw_type(i_param,j_param)=1
               call combination_rule_cross_terms(atype_vdw_parameter,i_param,j_param,lj_comb_rule, atype_vdw_type, atype_vdw_tmp)

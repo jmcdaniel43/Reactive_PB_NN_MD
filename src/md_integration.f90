@@ -26,13 +26,7 @@ contains
     type(file_io_data_type) , intent(in)         :: file_io_data
 
 
-    Select Case (integrator_data%ensemble)
-    Case("NVE")
-       !*********************** this is nve md ******************************!
        call md_integrate_atomic( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
-    case default
-       stop "Currently, only NVE ensemble is implemented"
-    end select
 
   end subroutine mc_sample
 
@@ -180,12 +174,54 @@ contains
 
   end subroutine subtract_center_of_mass_momentum
 
+  !************************************************************************
+  ! This is a Langevin Integrator used for NVT simulations. This is used in
+  ! conjunction with the md_integrate_atomic subroutine shown below. This
+  ! uses Leapfrog Langevin Integration, following the OpenMM implementation.
+  ! The friction coefficient used here is equal to 1/ps.
+  !************************************************************************
+  subroutine langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
+    use global_variables
+    type( system_data_type ), intent(inout)     :: system_data
+    type( atom_data_type ) , intent(inout)      :: atom_data
+    integer, intent(in)                         :: i_atom
+    real*8, intent(in)                          :: conv_fac
+    real*8, intent(in)                          :: dt
 
+    real*8 :: f_coeff
+    real*8 :: kb
+    real*8 :: temperature
+    real*8 :: zr
+    real*8, dimension(2) :: z
+    real*8, dimension(3) :: rand
 
+    f_coeff = constants%friction_coeff
+    kb = constants%boltzmann
+    temperature = system_data%temperature
+    ! Get a random number for all 3 velocity components
+    do
+       call random_number(z)
+       z=2.0*z-1.0
+       zr=z(1)**2+z(2)**2
+       if (zr > 0.0 .and. zr < 1.0) exit
+    end do
+    zr=sqrt(-2.0*log(zr)/zr)
+    z=z*zr
+    rand(1) = z(1)
+    rand(2) = z(2)
+    do
+       call random_number(z)
+       z=2.0*z-1.0
+       zr=z(1)**2+z(2)**2
+       if (zr > 0.0 .and. zr < 1.0) exit
+    end do
+    zr=sqrt(-2.0*log(zr)/zr)
+    z=z*zr
+    rand(3) = z(1)
 
+    atom_data%velocity(:,i_atom) = Exp(-1*f_coeff*dt/2d0) * atom_data%velocity(:,i_atom) + (1-Exp(-1*f_coeff*dt/2d0))/f_coeff *atom_data%force(:,i_atom) / atom_data%mass(i_atom) * conv_fac + sqrt(2*kb*temperature*f_coeff*1000d0) / sqrt(atom_data%mass(i_atom)/1000d0) / 100d0 * sqrt((1-Exp(-1*f_coeff*dt))/(2d0*f_coeff)) * rand(:)
 
-
-
+    end subroutine langevin_integrator
 
 
   !************************************************************************
@@ -214,8 +250,9 @@ contains
     type(PME_data_type)     , intent(inout)     :: PME_data
     type(file_io_data_type) , intent(in)        :: file_io_data
 
-    integer :: i_atom, i_type, total_atoms
+    integer :: i_atom, i_type, total_atoms, h3o_ind, i
     real*8  :: dt , conv_fac
+    integer, dimension(4) :: atom_num
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -229,7 +266,18 @@ contains
     conv_fac = constants%conv_kJmol_ang2ps2gmol  ! converts kJ/mol to A^2/ps^2*g/mol
     total_atoms = system_data%total_atoms
 
-    !******************* Velocity Verlet Integrator
+    !h3o_ind = hydronium_molecule_index(1)
+    !atom_num = molecule_data(h3o_ind)%atom_index
+
+    !if ( mod( trajectory_step, integrator_data%n_output ) == 0 ) then
+    !do i=atom_num(1), atom_num(4)
+    !    write(file_io_data%ofile_hamiltonian_file_h,*) atom_data%velocity(:, i)
+    !enddo
+    !write(file_io_data%ofile_hamiltonian_file_h,*) ""    
+   ! endif
+
+
+    !******************* Velocity Verlet Integrator or Langevin Leapfrog 
 
     ! first calculate velocities at delta_t / 2
        do i_atom = 1, total_atoms
@@ -239,7 +287,12 @@ contains
           if ( atype_freeze(i_type) /= 1 ) then
              ! first calculate velocities at delta_t / 2
              ! here force is in kJ/mol*Ang^-1
+             Select Case( integrator_data%ensemble )
+             Case("NVE")
              atom_data%velocity(:,i_atom) = atom_data%velocity(:,i_atom) + dt / 2d0 / atom_data%mass(i_atom) * atom_data%force(:,i_atom) * conv_fac
+             Case("NVT")
+             call langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
+             End Select
 
              ! now calculate new atomic coordinates at delta_t
              atom_data%xyz(:,i_atom) = atom_data%xyz(:,i_atom) + atom_data%velocity(:,i_atom) * dt
@@ -269,7 +322,13 @@ contains
           ! update position, velocity if atom isn't frozen
           if ( atype_freeze(i_type) /= 1 ) then
              ! here force is in kJ/mol*Ang^-1
+             Select Case( integrator_data%ensemble )
+             Case("NVE")
              atom_data%velocity(:,i_atom) = atom_data%velocity(:,i_atom) + dt / 2d0 / atom_data%mass(i_atom) * atom_data%force(:,i_atom) * conv_fac
+             Case("NVT")
+             call langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
+             End Select
+
 
              ! make sure forces aren't crazy
              if ( ( abs( atom_data%force(1,i_atom) ) > 10d4 ) .or. ( abs( atom_data%force(2,i_atom) ) > 10d4 ) .or. ( abs( atom_data%force(3,i_atom) ) > 10d4 ) ) then

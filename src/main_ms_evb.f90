@@ -98,9 +98,8 @@ program main_ms_evb
      call print_step( file_io_data%ofile_traj_file_h, file_io_data%ofile_log_file_h , i_step, system_data, integrator_data, molecule_data, atom_data )
   End Select
 
-
-  do i_step = 1, integrator_data%n_step
-
+  do i_step = 1, integrator_data%n_step - n_old_trajectory
+    
      ! this is global variable which may be used for printing in ms-evb
      trajectory_step = n_old_trajectory + i_step
 
@@ -115,10 +114,9 @@ program main_ms_evb
      Select Case( checkpoint_velocity )
      Case("yes")
         if ( mod( i_step, n_step_velocity ) == 0 ) then    
-           call print_velocities_checkpoint( file_io_data%ifile_velocity_file_h, i_step , integrator_data%delta_t, system_data , molecule_data , atom_data  )
+            call print_velocities_checkpoint( file_io_data%ifile_velocity_file_h, trajectory_step , integrator_data%delta_t, system_data , molecule_data , atom_data  )
         endif
      End Select
-
   end do
 
 

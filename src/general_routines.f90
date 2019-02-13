@@ -133,7 +133,6 @@ contains
     integer :: flag, flag_eof, nargs, i_step_traj
     character(400) :: line
     character(40),dimension(10)  :: args
-    
        ! read until the final step
        do 
           call read_file_find_heading( traj_file, 'step' , flag, flag_eof )
@@ -143,11 +142,9 @@ contains
           call parse( line," ", args, nargs )
           if ( nargs /= 4 ) stop "error reading line arguments in trajectory file"
           read(args(2),'(I10)') i_step_traj
-
           ! if final step, exit this loop
           if ( i_step_traj == n_old_trajectory ) Exit
        enddo
-
        ! backspace one more time in prep for coordinate read...
        backspace(traj_file)
 
@@ -221,7 +218,6 @@ contains
           n_mole = n_mole + 1
       end if
    end do
-  
   close( file_handle )
 
   end subroutine read_gro_number_molecules
@@ -329,7 +325,10 @@ contains
 
     system_data%box=box
 
-  close( file_handle )
+  ! don't close file here, as this may be continuing a simulation,
+  ! and we want to append output to this trajectory file
+
+!  close( file_handle )
 
 
   end subroutine read_gro
@@ -367,7 +366,6 @@ contains
           flag=-1
           Exit
        end if
-
        ! check end of section
        call parse(line," ",args,nargs)
        if ( nargs == 0 ) then
@@ -2359,7 +2357,6 @@ contains
     logical :: pres
     character :: ch,cha
     integer:: i,k,lenstr,ibsl,ipos,iposa
-
     pres=present(sep)
     str=adjustl(str)
     call compact(str)
@@ -2382,7 +2379,7 @@ contains
           ibsl=1
           cycle
        end if
-       ipos=index(delims,ch)         
+       ipos=index(delims,ch)
        if(ipos == 0) then          ! character is not a delimiter
           k=k+1
           before(k:k)=ch

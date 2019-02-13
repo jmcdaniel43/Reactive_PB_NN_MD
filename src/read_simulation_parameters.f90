@@ -168,7 +168,7 @@ contains
     ! note, these default settings will still be subject to consistency checks against the required variables further down
 
     if( flag_ensemble .eq. 0 ) then
-       integrator_data%ensemble = 'NVE'
+       integrator_data%ensemble = 'NVT'
     endif
 
     if ( flag_alpha_sqrt .eq. 0 ) then

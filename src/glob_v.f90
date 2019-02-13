@@ -31,7 +31,7 @@ implicit none
 
   ! these are number of atom/molecule types in force field, control size of
   ! force field parameter arrays
-  integer, parameter ::  MAX_N_MOLE_TYPE=10, MAX_N_ATOM_TYPE=20
+  integer, parameter ::  MAX_N_MOLE_TYPE=10, MAX_N_ATOM_TYPE=25
 
   integer, parameter :: MAX_FN=100, MAX_ANAME=5, MAX_MNAME=5
 
@@ -220,6 +220,7 @@ implicit none
   real*8      :: conv_kJmol_ang2ps2gmol       ! converts kJ/mol to A^2/ps^2*g/mol
   real*8      :: conv_e2A_kJmol               ! converts e^2/A to kJ/mol
   real*8      :: boltzmann                    ! kB, kJ/mol/K
+  real*8      :: friction_coeff               ! Friction coefficient for Langevin integrator, 1/ps
  end type constants_data_type
 
  Type(constants_data_type) :: constants
@@ -388,6 +389,7 @@ implicit none
   constants%conv_kJmol_ang2ps2gmol = 100d0  ! converts kJ/mol to A^2/ps^2*g/mol
   constants%conv_e2A_kJmol = 1389.35465     ! converts e^2/A to kJ/mol
   constants%boltzmann = 0.008314462d0       ! kB, kJ/mol/K
+  constants%friction_coeff = 0.1d0            ! Friction coefficient for the Langevin integrator, 1/ps
 
   ! fill in verlet list parameters
   verlet_list_data%safe_verlet= 1.2 ! need bigger for long lamallae 1.6
