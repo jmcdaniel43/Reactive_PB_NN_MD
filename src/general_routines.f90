@@ -1238,7 +1238,7 @@ contains
     type(verlet_list_data_type), intent(inout) :: verlet_list_data
     integer, intent(in) :: total_atoms
     real*8,  intent(in) :: volume
-    integer, parameter :: min_neighbors=50 ! this is arbitrary, used to keep simulations from crashing
+    integer, parameter :: min_neighbors=200 ! this is arbitrary, used to keep simulations from crashing
     integer :: min_size_verlet
     integer :: size_verlet
     real*8  :: pi
@@ -1417,6 +1417,10 @@ contains
     !***********************************************************************!
 
     n_mole = size(molecule_data)
+
+    if (box(1,1) < 2 * verlet_list_data%verlet_cutoff) then
+        stop "box size less than twice verlet cutoff"
+    end if
 
     nx = verlet_list_data%na_nslist ; ny = verlet_list_data%nb_nslist ; nz = verlet_list_data%nc_nslist ;
     ! hash won't work if these are not 2 digit

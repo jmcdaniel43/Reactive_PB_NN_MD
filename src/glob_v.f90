@@ -38,8 +38,8 @@ implicit none
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
   character(3)  :: grid_Tang_Toennies ! grid damping functions
 
-  character(3), parameter  :: ms_evb_simulation="yes"   ! ms_evb
-  character(3), parameter  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
+  character(3), parameter  :: ms_evb_simulation="no"   ! ms_evb
+  character(3), parameter  :: print_ms_evb_data = "no"  ! if yes, this will print extra evb trajectory info
 
 !***********************************************************************************************
 
@@ -128,6 +128,9 @@ implicit none
    real*8, dimension(3,3) :: xyz_to_box_transform  ! transformation matrix to box vectors
    real*8                 :: volume
    real*8                 :: temperature      ! temperature for generating Maxwell-Boltzmann velocities (no thermostat yet)
+   real*8                 :: pressure         ! pressure for barostat in bar
+   integer                :: barofreq         ! frequency that the barostat will attempt to modify the system
+   real*8                 :: baroscale        ! initial scale used to perform Monte Carlo NPT
    real*8                 :: kinetic_energy   ! total system KE
    real*8                 :: potential_energy ! total system PE
    real*8                 :: E_elec           ! electrostatic energy
@@ -241,6 +244,7 @@ implicit none
   integer                                   :: nc_nslist  
   real*8, dimension(:,:), allocatable           :: verlet_xyz_store
   real*8, dimension(:,:), allocatable           :: verlet_displacement_store
+  integer                                   :: flag_verlet_list
  end type verlet_list_data_type
 
 

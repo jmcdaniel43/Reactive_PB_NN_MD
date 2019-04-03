@@ -22,9 +22,33 @@ contains
     Type(molecule_data_type),dimension(:),intent(in)    :: molecule_data
     Type(atom_data_type),intent(inout)                  :: atom_data
     Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
-    Type(PME_data_type), intent(inout)                     :: PME_data
+    Type(PME_data_type), intent(inout)                  :: PME_data
 
-    integer :: flag_verlet_list, flag_junk
+    integer :: flag_junk
+
+    !************************* check Verlet list, make sure it's updated ***********************
+       ! if flag_verlet_list=0, verlet list is fine, if it's 1, we need to update verlet list
+       Select Case(verlet_list_data%flag_verlet_list)
+       Case(1)
+          call construct_verlet_list( verlet_list_data, atom_data, molecule_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
+
+          ! the "1" input to update_verlet_displacements signals to initialize the displacement array
+          call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data , system_data%box, system_data%xyz_to_box_transform , flag_junk, 1 )
+       Case Default
+           call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data, system_data%box, system_data%xyz_to_box_transform, verlet_list_data%flag_verlet_list )     
+       End Select
+    !***************************************************************************************
+
+    call calculate_total_force_energy_no_verlet(system_data, molecule_data, atom_data, verlet_list_data, PME_data)
+
+  end subroutine calculate_total_force_energy
+
+  subroutine calculate_total_force_energy_no_verlet(system_data, molecule_data, atom_data, verlet_list_data, PME_data )
+    Type(system_data_type),intent(inout)                :: system_data
+    Type(molecule_data_type),dimension(:),intent(in)    :: molecule_data
+    Type(atom_data_type),intent(inout)                  :: atom_data
+    Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
+    Type(PME_data_type), intent(inout)                  :: PME_data
 
     ! zero forces and all energy components.  It is important to zero All force elements, because for ms-evb we are constantly changing topology
     atom_data%force=0d0
@@ -34,18 +58,6 @@ contains
     system_data%E_bond = 0d0
     system_data%E_angle= 0d0
     system_data%E_dihedral=0d0
-
-
-    !************************* check Verlet list, make sure it's updated ***********************
-       call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data, system_data%box, system_data%xyz_to_box_transform, flag_verlet_list )     
-       ! if flag_verlet_list=0, verlet list is fine, if it's 1, we need to update verlet list
-       Select Case(flag_verlet_list)
-       Case(1)
-          call construct_verlet_list( verlet_list_data, atom_data, molecule_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
-          ! the "1" input to update_verlet_displacements signals to initialize the displacement array
-          call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data , system_data%box, system_data%xyz_to_box_transform , flag_junk, 1 )
-       End Select
-    !***************************************************************************************
 
 
     !***************************** real-space interactions *************************
@@ -98,7 +110,7 @@ contains
     system_data%potential_energy = system_data%E_elec + system_data%E_vdw + system_data%E_bond + system_data%E_angle + system_data%E_dihedral
 
 
-  end subroutine calculate_total_force_energy
+  end subroutine calculate_total_force_energy_no_verlet
 
 
 

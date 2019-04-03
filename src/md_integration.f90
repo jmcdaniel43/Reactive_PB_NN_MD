@@ -26,7 +26,19 @@ contains
     type(file_io_data_type) , intent(in)         :: file_io_data
 
 
-       call md_integrate_atomic( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
+    print *, trajectory_step, modulo(trajectory_step, system_data%barofreq), system_data%potential_energy
+    print*, system_data%E_elec, system_data%E_vdw, system_data%E_bond, system_data%E_angle, system_data%E_dihedral
+
+    Select Case( integrator_data%ensemble )
+    Case("NPT")
+        if (modulo(trajectory_step-1, system_data%barofreq) == 0) then
+            print *, "running monte carlo"
+            call monte_carlo_barostat(system_data, molecule_data, atom_data, integrator_data, verlet_list_data, PME_data, file_io_data)
+        endif
+    End Select
+
+    call md_integrate_atomic(system_data, molecule_data, atom_data, integrator_data, verlet_list_data, PME_data, file_io_data)
+
 
   end subroutine mc_sample
 
@@ -224,6 +236,191 @@ contains
     end subroutine langevin_integrator
 
 
+  subroutine monte_carlo_barostat(system_data, molecule_data, atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )
+      use global_variables
+      use total_energy_forces
+      use ms_evb
+      type( system_data_type ), intent(inout)     :: system_data
+      type( molecule_data_type ), dimension(:), intent(inout)   :: molecule_data
+      type( atom_data_type ) , intent(inout)      :: atom_data
+      type( integrator_data_type ), intent(in)    :: integrator_data
+      type(verlet_list_data_type), intent(inout)  :: verlet_list_data
+      type(PME_data_type)     , intent(inout)     :: PME_data
+      type(file_io_data_type) , intent(in)        :: file_io_data
+
+      integer, save :: n_trials, n_accept
+      logical :: accepted
+
+      ! storage for data in case move is rejected
+      real*8, dimension(3,10000) :: positions
+      real*8, dimension(3,10000) :: saved_forces
+      real*8, dimension(6) :: saved_energies
+
+      integer :: i,j, verlet_flag_junk
+      real*8 :: box_vec, dbox_vec
+      real*8 :: deltalen, oldboxlen, newboxlen
+      real*8 :: kT, Eold, Enew, w, rand, pV, S
+      real*8, parameter :: conv = 6.022/10**5 ! 10**5 * 10**-3 * 10**-30 * 6.022*10**23 ! bar to Pa to kJ/m^3 to kJ/A^3 to kJ/mol/A^3
+
+      ! check if box is cubic; if not we crashin out
+      box_vec = dot_product(system_data%box(:,1), system_data%box(:,1))
+      do i=2,3
+        dbox_vec = box_vec - dot_product(system_data%box(:,i), system_data%box(:,i))
+        if (dbox_vec .GE. 0.001) error stop "monte carlo barostat cannot be used with non-cubic box"
+      end do
+
+      n_trials = n_trials + 1
+
+      kT = constants%boltzmann * system_data%temperature ! kJ/mol
+      Eold = system_data%potential_energy ! kJ/mol
+
+      ! save pre-move configuation
+      do i=1,system_data%total_atoms
+        positions(:,i) = atom_data%xyz(:,i)
+      end do
+
+      do i=1,system_data%total_atoms
+        saved_forces(:,i) = atom_data%force(:,i)
+      end do
+
+      saved_energies(1) = system_data%potential_energy
+      saved_energies(2) = system_data%E_elec
+      saved_energies(3) = system_data%E_vdw
+      saved_energies(4) = system_data%E_bond
+      saved_energies(5) = system_data%E_angle
+      saved_energies(6) = system_data%E_dihedral
+
+      ! make new periodic box
+      oldboxlen = system_data%box(1,1) ! this okay because cubic => all elements of box(i, i!=j) are 0
+      print*, "box", system_data%box(1,:)
+      call random_number(rand)
+      deltalen = system_data%box(1,1) * system_data%baroscale * (rand * 2 - 1)
+      print*, "dlen", deltalen
+      do j=1,3
+          system_data%box(j,j) = system_data%box(j,j) + deltalen
+      end do
+      call periodic_box_change(system_data, PME_data)
+      newboxlen = oldboxlen + deltalen
+
+      ! scale molecular coordinates to new box size
+      do i=1,system_data%n_mole
+        call scale_coordinates(i, newboxlen/oldboxlen, system_data, molecule_data, atom_data)
+      end do
+
+      !************** get energy ****************!
+          Select Case(ms_evb_simulation)
+          Case("yes")
+              call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data%n_output )
+          Case("no")
+              call calculate_total_force_energy_no_verlet(system_data, molecule_data, atom_data, verlet_list_data, PME_data)
+          End Select
+      !*****************************************!
+
+
+      !**************** test our monte carlo move *************************!
+      Enew = system_data%potential_energy
+
+      pV = conv * system_data%pressure * deltalen**3
+      S = system_data.n_mole * kT * 3*log(newboxlen/oldboxlen)
+
+      w = Enew-Eold + pV - S
+
+      print*, "ratio", (newboxlen/oldboxlen)**3
+      print*, Eold
+      print*, Enew-Eold, pV, S, w
+
+      accepted = .true.
+
+      if (w >= 0) then
+          call random_number(rand)
+          if (rand > exp(-w/kT)) then
+              ! move has been rejected
+              ! undo all of the coordinate scales that were just done
+              do j=1,3
+                  system_data%box(j,j) = system_data%box(j,j) - deltalen
+              end do
+              call periodic_box_change(system_data, PME_data)
+
+              do i=1,system_data%total_atoms
+                atom_data%xyz(:,i) = positions(:,i)
+              end do
+
+              do i=1,system_data%total_atoms
+                atom_data%force(:,i) = saved_forces(:,i)
+              end do
+
+              system_data%potential_energy = saved_energies(1)
+              system_data%E_elec     = saved_energies(2)
+              system_data%E_vdw      = saved_energies(3)
+              system_data%E_bond     = saved_energies(4)
+              system_data%E_angle    = saved_energies(5)
+              system_data%E_dihedral = saved_energies(6)
+
+              print *, "reject move"
+              accepted = .false.
+          endif
+      endif
+
+      if (accepted) then
+          n_accept = n_accept + 1
+          print *, "accept move"
+
+          verlet_list_data%flag_verlet_list = 1
+      endif
+
+      if (n_trials > 10) then
+          if (n_accept < 0.25*n_trials) then
+              system_data%baroscale = system_data%baroscale / 1.1
+              n_trials = 0
+              n_accept = 0
+          else if (n_accept > 0.75*n_trials) then
+              system_data%baroscale = system_data%baroscale * 1.1
+              n_trials = 0
+              n_accept = 0
+          endif
+      endif
+
+      print*, "end move"
+
+  end subroutine monte_carlo_barostat
+
+  subroutine scale_coordinates(mol_index, boxscale, system_data, molecule_data, atom_data)
+      use global_variables
+      type( system_data_type ), intent(inout)                   :: system_data
+      type( molecule_data_type ), dimension(:), intent(inout)   :: molecule_data
+      type( atom_data_type ) , intent(inout)                    :: atom_data
+      integer, intent(in) :: mol_index
+      real*8, intent(in) :: boxscale
+
+      integer :: j, k
+      type(molecule_data_type) :: mol
+
+      ! vector for center of mass in box coordinates
+      real*8, dimension(3) :: r_com_box
+
+      ! displacement vector from the center of mass for each atom in the molecule
+      ! num atoms is fixed to length 10 so that it can be stack allocated
+      real*8, dimension(10,3) :: dr_com
+
+      mol = molecule_data(mol_index)
+      ! find displacement vectors for each atom
+      do j=1,mol%n_atom
+          dr_com(j, :) =  mol%r_com(:) - atom_data%xyz(:, mol%atom_index(j))
+      end do
+
+      ! scale the center of mass vector using box coordinates
+      ! r_com_box = matmul(system_data%xyz_to_box_transform, mol%r_com)
+      ! mol%r_com = matmul(system_data%box, r_com_box(:) * boxscale)
+      mol%r_com(:) = mol%r_com(:) * boxscale ! because the box is cubic
+
+      ! update atomic positions for the molecule using previously calculated
+      ! displacements
+      do j=1,mol%n_atom
+          atom_data%xyz(:, mol%atom_index(j)) = mol%r_com(:) - dr_com(j, :)
+      end do
+  end subroutine
+
+
   !************************************************************************
   ! this is the MD engine for atomistic molecular simulations.  
   ! currently, this uses the velocity verlet algorithm to integrate Newton's equations
@@ -261,6 +458,47 @@ contains
     endif
     !***********************************************************************!
 
+    !***********************************************************************!
+    ! print hydronium neighborhood for autoencoder project
+
+    ! print *, "BEGIN hydronium positions; step:", trajectory_step
+
+    ! h3o_index = hydronium_molecule_index(1)
+
+    ! do j_index = 1,4
+    !     j_atom = molecule_data(h3o_index)%atom_index(j_index)
+    !     x = atom_data%xyz(1,j_atom)
+    !     y = atom_data%xyz(2,j_atom)
+    !     z = atom_data%xyz(3,j_atom)
+    !     atype_index = atom_data%atom_type_index(j_atom)
+    !     write(*, '(A, I, F10.4, F10.4, F10.4)'), atype_name(atype_index), j_atom, x,y,z
+    ! end do
+
+    ! print *, "END hydronium positions"
+
+    ! oxygen_index = molecule_data(h3o_index)%atom_index(1)
+    ! verlet_start = verlet_list_data%verlet_point(oxygen_index)
+    ! verlet_finish = verlet_list_data%verlet_point(oxygen_index + 1) - 1
+    ! n_neighbors = verlet_finish - verlet_start + 1
+
+    ! write (*, '(A, I4, A, I)'), "BEGIN hydronium neighborhood (", n_neighbors, " atoms); step:", trajectory_step
+
+    ! ! find all neighbor indices of the oxygen atom
+    ! do j_index=verlet_start, verlet_finish
+    !     j_atom = verlet_list_data%neighbor_list(j_index)
+    !     x = atom_data%xyz(1,j_atom)
+    !     y = atom_data%xyz(2,j_atom)
+    !     z = atom_data%xyz(3,j_atom)
+    !     atype_index = atom_data%atom_type_index(j_atom)
+    !     write(*, '(A, I, F10.4, F10.4, F10.4)'), atype_name(atype_index), j_atom, x,y,z
+    ! end do
+
+    ! print *, "END hydronium neighborhood"
+
+
+    !***********************************************************************!
+
+
     ! define local variables for convenience
     dt = integrator_data%delta_t
     conv_fac = constants%conv_kJmol_ang2ps2gmol  ! converts kJ/mol to A^2/ps^2*g/mol
@@ -290,7 +528,7 @@ contains
              Select Case( integrator_data%ensemble )
              Case("NVE")
              atom_data%velocity(:,i_atom) = atom_data%velocity(:,i_atom) + dt / 2d0 / atom_data%mass(i_atom) * atom_data%force(:,i_atom) * conv_fac
-             Case("NVT")
+             Case Default
              call langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
              End Select
 
@@ -325,7 +563,7 @@ contains
              Select Case( integrator_data%ensemble )
              Case("NVE")
              atom_data%velocity(:,i_atom) = atom_data%velocity(:,i_atom) + dt / 2d0 / atom_data%mass(i_atom) * atom_data%force(:,i_atom) * conv_fac
-             Case("NVT")
+             Case Default
              call langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
              End Select
 

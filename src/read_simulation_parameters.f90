@@ -37,6 +37,7 @@ contains
     integer:: flag_ensemble=0, flag_n_step=0, flag_n_output=0, flag_temperature=0, flag_n_exclusions=0
     integer:: flag_delta_t=0, flag_real_space_cutoff=0, flag_n_threads=0, flag_lj_comb_rule=0
     integer:: flag_na_nslist=0, flag_nb_nslist=0, flag_nc_nslist=0, flag_verlet_cutoff=0, flag_debug=0, flag_grid_Tang_Toennies=0, flag_alpha_sqrt=0, flag_pme_grid=0, flag_spline_order=0, flag_checkpoint_velocity=0
+    integer:: flag_pressure=0, flag_barofreq=0, flag_baroscale=0
 
 
     open(unit=file_h,file=ifile_simpmt,status="old")
@@ -59,6 +60,7 @@ contains
        Select Case (param_name)
        Case("ensemble")
           integrator_data%ensemble = param_string
+          print *, param_string
           flag_ensemble=1
        Case("lj_comb_rule")
           lj_comb_rule = param_string
@@ -92,6 +94,15 @@ contains
        Case("temperature")
           system_data%temperature = param_number
           flag_temperature=1
+       Case("pressure")
+          system_data%pressure = param_number
+          flag_pressure = 1
+       Case("barofreq")
+          system_data%barofreq = NINT(param_number)
+          flag_barofreq = 1
+       Case("baroscale")
+          system_data%baroscale = param_number
+          flag_baroscale = 1
        Case("delta_t")
           integrator_data%delta_t = param_number
           flag_delta_t = 1
@@ -161,7 +172,11 @@ contains
     if ( flag_verlet_cutoff == 0 ) then
        stop "variable verlet_cutoff has not been given a value under the Simulation Parameters section in simulation parameter input file"         
     endif
-
+    if( flag_pressure .eq. 0 ) then
+       if (integrator_data%ensemble .eq. 'NPT') then
+         stop "variable pressure has not been given a value under the Simulation Parameters section in simulation parameter input file AND ensemble is set to NPT"
+       endif
+    endif
 
     ! ******************************************* DEFAULT VALUES for some variables ****************************************************
     ! if these variables are not present in the simulation parameters input file, we try to set to standard settings
@@ -169,6 +184,14 @@ contains
 
     if( flag_ensemble .eq. 0 ) then
        integrator_data%ensemble = 'NVT'
+    endif
+
+    if( flag_barofreq .eq. 0 ) then
+       system_data%barofreq = 25
+    endif
+
+    if( flag_baroscale .eq. 0 ) then
+       system_data%baroscale = 0.01
     endif
 
     if ( flag_alpha_sqrt .eq. 0 ) then

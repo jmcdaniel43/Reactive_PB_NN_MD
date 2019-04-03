@@ -149,8 +149,8 @@ contains
        size = system_data%total_atoms * PME_data%spline_order**3
        ! size could be big depending on the system, make sure we don't ask for too much memory
        if ( size > 10000000 ) then
-	  write(*,*) "are you sure you want to store dQ_dr?  This requires allocating an array"
-	  write(*,*) " bigger than 3 x ", size
+         write(*,*) "are you sure you want to store dQ_dr?  This requires allocating an array"
+         write(*,*) " bigger than 3 x ", size
           stop
        end if
        ! allocate column major
@@ -215,14 +215,8 @@ contains
     status=DftiCreateDescriptor(PME_data%dfti_desc_inv, DFTI_DOUBLE, DFTI_COMPLEX, 3, length)
     status=DftiCommitDescriptor(PME_data%dfti_desc_inv)
 
-    ! compute CB array 
-    a(:) = system_data%box(1,:); b(:) = system_data%box(2,:); c(:) = system_data%box(3,:)
-    call crossproduct( a, b, kc ); kc = kc / system_data%volume 
-    call crossproduct( b, c, ka ); ka = ka / system_data%volume
-    call crossproduct( c, a, kb ); kb = kb / system_data%volume
-    kk(1,:)=ka(:);kk(2,:)=kb(:);kk(3,:)=kc(:)
-
-    call CB_array(PME_data%CB,PME_data%alpha_sqrt,system_data%volume,pme_grid,kk,PME_data%spline_order)
+    ! initialize PME dependency on system volume
+    call periodic_box_change(system_data, PME_data)
 
     ! grid B_splines
        if (PME_data%spline_order .eq. 6) then

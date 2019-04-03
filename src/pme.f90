@@ -658,5 +658,33 @@ contains
 
   end subroutine update_Ewald_self
 
+  !***************************************************************************
+  ! This function updates the CB_array in the PME_data structure due to volume
+  ! changes
+  !
+  ! If a change to the periodic box is made at some point in the code, the PME
+  ! data must be updated to maintain integrity of the electrostatics energy
+  ! **************************************************************************
+  subroutine periodic_box_change(system_data, PME_data)
+      use global_variables
+      Type(system_data_type),intent(inout)                :: system_data
+      Type(PME_data_type), intent(inout)                  :: PME_data
+
+      real*8 :: a(3), b(3), c(3), ka(3), kb(3), kc(3),kk(3,3)
+
+      system_data%volume = system_data%box(1,1)**3
+      call initialize_non_orth_transform(system_data%box, system_data%xyz_to_box_transform)
+
+      ! compute CB array
+      a(:) = system_data%box(1,:); b(:) = system_data%box(2,:); c(:) = system_data%box(3,:)
+      call crossproduct( a, b, kc ); kc = kc / system_data%volume
+      call crossproduct( b, c, ka ); ka = ka / system_data%volume
+      call crossproduct( c, a, kb ); kb = kb / system_data%volume
+      kk(1,:)=ka(:);kk(2,:)=kb(:);kk(3,:)=kc(:)
+
+      call CB_array(PME_data%CB,PME_data%alpha_sqrt,system_data%volume,PME_data%pme_grid,kk,PME_data%spline_order)
+
+  end subroutine periodic_box_change
+
 
 end module pme_routines
