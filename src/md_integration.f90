@@ -31,7 +31,7 @@ contains
 
     Select Case( integrator_data%ensemble )
     Case("NPT")
-        if (modulo(trajectory_step-1, system_data%barofreq) == 0) then
+        if (modulo(trajectory_step, system_data%barofreq) == 0) then
             print *, "running monte carlo"
             call monte_carlo_barostat(system_data, molecule_data, atom_data, integrator_data, verlet_list_data, PME_data, file_io_data)
         endif
@@ -299,7 +299,7 @@ contains
       do j=1,3
           system_data%box(j,j) = system_data%box(j,j) + deltalen
       end do
-      call periodic_box_change(system_data, PME_data)
+      call periodic_box_change(system_data, PME_data, verlet_list_data, atom_data, molecule_data)
       newboxlen = oldboxlen + deltalen
 
       ! scale molecular coordinates to new box size
@@ -339,7 +339,7 @@ contains
               do j=1,3
                   system_data%box(j,j) = system_data%box(j,j) - deltalen
               end do
-              call periodic_box_change(system_data, PME_data)
+              call periodic_box_change(system_data, PME_data, verlet_list_data, atom_data, molecule_data)
 
               do i=1,system_data%total_atoms
                 atom_data%xyz(:,i) = positions(:,i)
@@ -366,6 +366,20 @@ contains
           print *, "accept move"
 
           verlet_list_data%flag_verlet_list = 1
+      endif
+
+
+      if(debug .eq. 1) then
+          if (accepted) then
+              write(*,*), "monte carlo move accepted"
+          else
+              write(*,*), "monte carlo move rejected"
+          endif
+          write(*,*), "box", system_data%box(1,:)
+          write(*,*), "dlen", deltalen
+          write(*,*), "monte carlo metropolis terms (Enew - Eold) pV S w"
+          write(*,*), Enew-Eold, pV, S, w
+          write(*,*), "end monte carlo move"
       endif
 
       if (n_trials > 10) then

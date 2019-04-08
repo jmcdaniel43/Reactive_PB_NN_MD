@@ -1238,7 +1238,7 @@ contains
     type(verlet_list_data_type), intent(inout) :: verlet_list_data
     integer, intent(in) :: total_atoms
     real*8,  intent(in) :: volume
-    integer, parameter :: min_neighbors=200 ! this is arbitrary, used to keep simulations from crashing
+    integer, parameter :: min_neighbors=50 ! this is arbitrary, used to keep simulations from crashing
     integer :: min_size_verlet
     integer :: size_verlet
     real*8  :: pi

@@ -216,7 +216,7 @@ contains
     status=DftiCommitDescriptor(PME_data%dfti_desc_inv)
 
     ! initialize PME dependency on system volume
-    call periodic_box_change(system_data, PME_data)
+    call periodic_box_change(system_data, PME_data, verlet_list_data, atom_data, molecule_data)
 
     ! grid B_splines
        if (PME_data%spline_order .eq. 6) then
