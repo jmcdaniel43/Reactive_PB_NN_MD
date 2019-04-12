@@ -39,17 +39,6 @@ contains
        End Select
     !***************************************************************************************
 
-    call calculate_total_force_energy_no_verlet(system_data, molecule_data, atom_data, verlet_list_data, PME_data)
-
-  end subroutine calculate_total_force_energy
-
-  subroutine calculate_total_force_energy_no_verlet(system_data, molecule_data, atom_data, verlet_list_data, PME_data )
-    Type(system_data_type),intent(inout)                :: system_data
-    Type(molecule_data_type),dimension(:),intent(in)    :: molecule_data
-    Type(atom_data_type),intent(inout)                  :: atom_data
-    Type(verlet_list_data_type),intent(inout)           :: verlet_list_data
-    Type(PME_data_type), intent(inout)                  :: PME_data
-
     ! zero forces and all energy components.  It is important to zero All force elements, because for ms-evb we are constantly changing topology
     atom_data%force=0d0
     system_data%potential_energy=0d0
@@ -110,7 +99,7 @@ contains
     system_data%potential_energy = system_data%E_elec + system_data%E_vdw + system_data%E_bond + system_data%E_angle + system_data%E_dihedral
 
 
-  end subroutine calculate_total_force_energy_no_verlet
+  end subroutine calculate_total_force_energy
 
 
 

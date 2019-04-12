@@ -941,6 +941,11 @@ contains
 
    write( log_file, * ) 'i_step , time(ps), potential energy (kJ/mol), kinetic energy (kJ/mol)'
    write( log_file, '(I9,F10.3,2E16.6)' ) i_step, time_step, system_data%potential_energy, system_data%kinetic_energy
+   Select Case( integrator_data%ensemble )
+   Case("NPT")
+       write( log_file, * ), "volume", system_data%volume, "density", system_data%n_mole / system_data%volume
+   end select
+
 
     Select Case(ms_evb_simulation)
     Case("yes")

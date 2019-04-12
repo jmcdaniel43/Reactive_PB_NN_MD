@@ -25,14 +25,11 @@ contains
     type(PME_data_type)     , intent(inout)      :: PME_data
     type(file_io_data_type) , intent(in)         :: file_io_data
 
-
-    print *, trajectory_step, modulo(trajectory_step, system_data%barofreq), system_data%potential_energy
-    print*, system_data%E_elec, system_data%E_vdw, system_data%E_bond, system_data%E_angle, system_data%E_dihedral
+    ! print*, trajectory_step
 
     Select Case( integrator_data%ensemble )
     Case("NPT")
         if (modulo(trajectory_step, system_data%barofreq) == 0) then
-            print *, "running monte carlo"
             call monte_carlo_barostat(system_data, molecule_data, atom_data, integrator_data, verlet_list_data, PME_data, file_io_data)
         endif
     End Select
@@ -256,9 +253,9 @@ contains
       real*8, dimension(3,10000) :: saved_forces
       real*8, dimension(6) :: saved_energies
 
-      integer :: i,j, verlet_flag_junk
+      integer :: i,j, verlet_flag_junk, h3o_index
       real*8 :: box_vec, dbox_vec
-      real*8 :: deltalen, oldboxlen, newboxlen
+      real*8 :: deltalen, oldboxlen, newboxlen, Vi
       real*8 :: kT, Eold, Enew, w, rand, pV, S
       real*8, parameter :: conv = 6.022/10**5 ! 10**5 * 10**-3 * 10**-30 * 6.022*10**23 ! bar to Pa to kJ/m^3 to kJ/A^3 to kJ/mol/A^3
 
@@ -273,6 +270,7 @@ contains
 
       kT = constants%boltzmann * system_data%temperature ! kJ/mol
       Eold = system_data%potential_energy ! kJ/mol
+      Vi = system_data%volume
 
       ! save pre-move configuation
       do i=1,system_data%total_atoms
@@ -292,27 +290,27 @@ contains
 
       ! make new periodic box
       oldboxlen = system_data%box(1,1) ! this okay because cubic => all elements of box(i, i!=j) are 0
-      print*, "box", system_data%box(1,:)
       call random_number(rand)
       deltalen = system_data%box(1,1) * system_data%baroscale * (rand * 2 - 1)
-      print*, "dlen", deltalen
+      newboxlen = oldboxlen + deltalen
       do j=1,3
           system_data%box(j,j) = system_data%box(j,j) + deltalen
       end do
       call periodic_box_change(system_data, PME_data, verlet_list_data, atom_data, molecule_data)
-      newboxlen = oldboxlen + deltalen
 
       ! scale molecular coordinates to new box size
       do i=1,system_data%n_mole
         call scale_coordinates(i, newboxlen/oldboxlen, system_data, molecule_data, atom_data)
       end do
 
+      h3o_index = hydronium_molecule_index(1)
+
       !************** get energy ****************!
           Select Case(ms_evb_simulation)
           Case("yes")
               call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data%n_output )
           Case("no")
-              call calculate_total_force_energy_no_verlet(system_data, molecule_data, atom_data, verlet_list_data, PME_data)
+              call calculate_total_force_energy(system_data, molecule_data, atom_data, verlet_list_data, PME_data)
           End Select
       !*****************************************!
 
@@ -320,22 +318,21 @@ contains
       !**************** test our monte carlo move *************************!
       Enew = system_data%potential_energy
 
-      pV = conv * system_data%pressure * deltalen**3
+      pV = conv * system_data%pressure * (system_data%volume - Vi)
       S = system_data.n_mole * kT * 3*log(newboxlen/oldboxlen)
-
       w = Enew-Eold + pV - S
 
-      print*, "ratio", (newboxlen/oldboxlen)**3
-      print*, Eold
-      print*, Enew-Eold, pV, S, w
+      if ( h3o_index /= hydronium_molecule_index(1) ) then
+          w = -1 ! force the volume move to accept so that proton jumps don't
+                 ! break the code
+      end if
 
       accepted = .true.
-
       if (w >= 0) then
           call random_number(rand)
           if (rand > exp(-w/kT)) then
               ! move has been rejected
-              ! undo all of the coordinate scales that were just done
+              ! undo all of the changes that were made to the system
               do j=1,3
                   system_data%box(j,j) = system_data%box(j,j) - deltalen
               end do
@@ -356,15 +353,12 @@ contains
               system_data%E_angle    = saved_energies(5)
               system_data%E_dihedral = saved_energies(6)
 
-              print *, "reject move"
               accepted = .false.
           endif
       endif
 
       if (accepted) then
           n_accept = n_accept + 1
-          print *, "accept move"
-
           verlet_list_data%flag_verlet_list = 1
       endif
 
@@ -375,9 +369,9 @@ contains
           else
               write(*,*), "monte carlo move rejected"
           endif
-          write(*,*), "box", system_data%box(1,:)
+          write(*,*), "cubic box length", system_data%box(1,1)
           write(*,*), "dlen", deltalen
-          write(*,*), "monte carlo metropolis terms (Enew - Eold) pV S w"
+          write(*,*), "monte carlo metropolis terms: (Enew - Eold) pV S w"
           write(*,*), Enew-Eold, pV, S, w
           write(*,*), "end monte carlo move"
       endif
@@ -393,8 +387,6 @@ contains
               n_accept = 0
           endif
       endif
-
-      print*, "end move"
 
   end subroutine monte_carlo_barostat
 
