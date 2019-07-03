@@ -16,7 +16,7 @@ contains
   !******************************************
   subroutine intra_molecular_energy_force( system_data, molecule_data, atom_data )
     use global_variables
-    use omp_lib
+!    use omp_lib
     type(system_data_type) , intent(inout)  :: system_data
     type(molecule_data_type), dimension(:), intent(in) :: molecule_data
     type(atom_data_type) , intent(inout) :: atom_data
@@ -35,9 +35,9 @@ contains
     ! note that not all molecules have dihedrals, and those that do are probably
     ! in continuous indices, so don't split loop into big chunks here
 
-    !    call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:E_bond, E_angle, E_dihedral)
-    !$OMP DO SCHEDULE(DYNAMIC,1)
+!    !    call OMP_SET_NUM_THREADS(n_threads)
+!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:E_bond, E_angle, E_dihedral)
+!    !$OMP DO SCHEDULE(DYNAMIC,1)
     do i_mole = 1, system_data%n_mole
 
        ! this is used to look up bonded force field parameters for this molecule
@@ -62,8 +62,8 @@ contains
        call dissociate_single_molecule_data(single_molecule_data)
 
     enddo
-    !$OMP END DO NOWAIT
-    !$OMP END PARALLEL
+!    !$OMP END DO NOWAIT
+!    !$OMP END PARALLEL
 
     system_data%E_bond = E_bond
     system_data%E_angle = E_angle

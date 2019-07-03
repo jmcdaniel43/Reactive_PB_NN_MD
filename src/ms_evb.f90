@@ -674,18 +674,18 @@ contains
     endif
 
     ! loop over diabats, excluding principle diabat
-    call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, system_data, molecule_data, atom_data, PME_data,  hydronium_molecule_index, i_mole_principle, diabat_index,  evb_hamiltonian, evb_diabat_coupling_matrix, store_index ) 
-    !$OMP DO SCHEDULE(dynamic, split_do)
+!    call OMP_SET_NUM_THREADS(n_threads)
+!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, system_data, molecule_data, atom_data, PME_data,  hydronium_molecule_index, i_mole_principle, diabat_index,  evb_hamiltonian, evb_diabat_coupling_matrix, store_index ) 
+!    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_diabat = 2, diabat_index
        call evb_create_diabat_data_structures( atom_data_diabat, molecule_data_diabat, system_data_diabat, atom_data, molecule_data , system_data , hydronium_molecule_index_temp, hydronium_molecule_index )
        !************************** calculate diagonal matrix element energy and forces for this diabat
        ! important note, after call to ms_evb_diabat_force_energy, the topology of the data structures will be changed from the donor to acceptor topology
        call ms_evb_diabat_force_energy( system_data_diabat, i_diabat, i_mole_principle, atom_data_diabat, molecule_data_diabat, PME_data, hydronium_molecule_index_temp)
        ! store the forces, this needs to be in critical section, because forces will be stored using store_index, and then store_index will be incremented
-       !$OMP CRITICAL
+!       !$OMP CRITICAL
        call evb_store_forces( i_mole_principle, i_diabat, i_diabat, system_data_diabat%n_mole, system_data_diabat%total_atoms, molecule_data_diabat, atom_data_diabat, store_index )
-       !$OMP END CRITICAL
+!       !$OMP END CRITICAL
        ! store the energy
        evb_hamiltonian( i_diabat , i_diabat ) = system_data_diabat%potential_energy
 
@@ -697,9 +697,9 @@ contains
        ! get donor diabat for which this coupling was calculated
        diabat_index_donor = evb_diabat_coupling_matrix(i_diabat)
        ! store the forces, note this coupling is between the current diabat, and the diabat_index_1neighbor (principle) diabat, again needs to be in critical section
-       !$OMP CRITICAL
+!       !$OMP CRITICAL
        call evb_store_forces( i_mole_principle, diabat_index_donor, i_diabat, system_data_diabat%n_mole, system_data_diabat%total_atoms, molecule_data_diabat, atom_data_diabat, store_index  )
-       !$OMP END CRITICAL
+!       !$OMP END CRITICAL
        ! store the energy
        evb_hamiltonian( diabat_index_donor , i_diabat ) = system_data_diabat%potential_energy
 
@@ -708,8 +708,8 @@ contains
        call deallocate_atom_data_diabat_type( atom_data_diabat )
 
     enddo
-    !$OMP END DO NOWAIT
-    !$OMP END PARALLEL
+!    !$OMP END DO NOWAIT
+!    !$OMP END PARALLEL
 
 
   end subroutine evb_hamiltonian_elements_donor_acceptor
@@ -1751,7 +1751,7 @@ contains
           ! neighbors
           ! all of these subroutines should vectorize...
           if ( n_cutoff > 0 ) then
-             call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )
+             call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, PME_data%erfc_table , PME_data%ewaldscale_table , PME_data%erfc_dx )
           else
              E_elec_local = 0d0
           endif
@@ -1861,7 +1861,7 @@ contains
        ! now calculate pairwise forces and energies for this atom and its neighbors
        ! all of these subroutines should vectorize...
        if ( n_cutoff > 0 ) then
-             call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij , pairwise_neighbor_data_cutoff%dr,pairwise_neighbor_data_cutoff%dr2, pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )
+             call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij , pairwise_neighbor_data_cutoff%dr,pairwise_neighbor_data_cutoff%dr2, pairwise_neighbor_data_cutoff%qi_qj, PME_data%erfc_table , PME_data%ewaldscale_table , PME_data%erfc_dx )
        else
              E_elec_local = 0d0
        endif
@@ -2033,7 +2033,7 @@ contains
   !***********************************
   subroutine calculate_reciprocal_space_pme( i_mole_principle, system_data , molecule_data, atom_data, PME_data  )
     use MKL_DFTI
-    use omp_lib
+!    use omp_lib
     implicit none
     integer, intent(in) :: i_mole_principle
     type(system_data_type), intent(in) :: system_data
@@ -2090,12 +2090,12 @@ contains
     endif
 
     !**** parallelize over diabats
-    call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, Q_grid_diabats,system_data,atom_data,molecule_data,PME_data,constants,K,kk,i_mole_principle, diabat_index,evb_forces_lookup_index,evb_hamiltonian,evb_forces_store,dfti_desc_local,dfti_desc_inv_local) 
-    !$OMP CRITICAL
+!    call OMP_SET_NUM_THREADS(n_threads)
+!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, Q_grid_diabats,system_data,atom_data,molecule_data,PME_data,constants,K,kk,i_mole_principle, diabat_index,evb_forces_lookup_index,evb_hamiltonian,evb_forces_store,dfti_desc_local,dfti_desc_inv_local) 
+!    !$OMP CRITICAL
     allocate( FQ(K,K,K), Q_local(K,K,K), theta_conv_Q_local(K,K,K), q_1r(K**3), q_1d(K**3), pme_force_recip_diabat(3,system_data%total_atoms) )
-    !$OMP END CRITICAL
-    !$OMP DO SCHEDULE(dynamic, split_do)
+!    !$OMP END CRITICAL
+!    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_diabat=2,diabat_index  ! skip the first diabat, as that is the principle diabat, and the force is correct
 
        ! Q grid for this diabat should already be stored
@@ -2159,9 +2159,9 @@ contains
 
     enddo
 
-    !$OMP END DO NOWAIT
+!    !$OMP END DO NOWAIT
     deallocate( FQ, Q_local, q_1r, q_1d,theta_conv_Q_local, pme_force_recip_diabat )
-    !$OMP END PARALLEL
+!    !$OMP END PARALLEL
 
     status=DftiFreeDescriptor(dfti_desc_local)
     status=DftiFreeDescriptor(dfti_desc_inv_local)

@@ -32,7 +32,7 @@ program main_ms_evb
  
   !***** Local variables
   integer :: i_step
-
+ 
   !********** initialize constants in global variables
   call initialize_constants( file_io_data , verlet_list_data , PME_data )
 
@@ -82,7 +82,6 @@ program main_ms_evb
 
 
   call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data )
-
 
   Select Case( restart_trajectory )
   Case("no")

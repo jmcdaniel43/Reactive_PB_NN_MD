@@ -37,7 +37,7 @@ contains
     integer:: flag_ensemble=0, flag_n_step=0, flag_n_output=0, flag_temperature=0, flag_n_exclusions=0
     integer:: flag_delta_t=0, flag_real_space_cutoff=0, flag_n_threads=0, flag_lj_comb_rule=0
     integer:: flag_na_nslist=0, flag_nb_nslist=0, flag_nc_nslist=0, flag_verlet_cutoff=0, flag_debug=0, flag_grid_Tang_Toennies=0, flag_alpha_sqrt=0, flag_pme_grid=0, flag_spline_order=0, flag_checkpoint_velocity=0
-    integer:: flag_pressure=0, flag_barofreq=0, flag_baroscale=0
+    integer:: flag_pressure=0, flag_barofreq=0, flag_baroscale=0, flag_friction_coeff=0
 
 
     open(unit=file_h,file=ifile_simpmt,status="old")
@@ -94,6 +94,9 @@ contains
        Case("temperature")
           system_data%temperature = param_number
           flag_temperature=1
+       Case("friction_coeff")
+          integrator_data%friction_coeff = param_number
+          flag_friction_coeff = 1
        Case("pressure")
           system_data%pressure = param_number
           flag_pressure = 1
@@ -193,6 +196,10 @@ contains
     if( flag_baroscale .eq. 0 ) then
        system_data%baroscale = 0.01
     endif
+
+    if( flag_friction_coeff .eq. 0 ) then
+       integrator_data%friction_coeff = 0.1d0            ! Friction coefficient for the Langevin integrator, 1/ps
+    endif    
 
     if ( flag_alpha_sqrt .eq. 0 ) then
        PME_data%alpha_sqrt= 0.3d0 ! in A^-1 , reasonable default value for Gaussian width parameter

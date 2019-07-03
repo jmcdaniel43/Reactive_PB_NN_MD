@@ -183,28 +183,31 @@ contains
 
   end subroutine subtract_center_of_mass_momentum
 
+
+
   !************************************************************************
   ! This is a Langevin Integrator used for NVT simulations. This is used in
   ! conjunction with the md_integrate_atomic subroutine shown below. This
   ! uses Leapfrog Langevin Integration, following the OpenMM implementation.
-  ! The friction coefficient used here is equal to 1/ps.
+  ! The friction coefficient has units 1/ps.
   !************************************************************************
-  subroutine langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
+  subroutine langevin_integrator( system_data, atom_data, integrator_data, i_atom, conv_fac )
     use global_variables
     type( system_data_type ), intent(inout)     :: system_data
     type( atom_data_type ) , intent(inout)      :: atom_data
+    type( integrator_data_type ), intent(in) :: integrator_data
     integer, intent(in)                         :: i_atom
     real*8, intent(in)                          :: conv_fac
-    real*8, intent(in)                          :: dt
 
-    real*8 :: f_coeff
+    real*8 :: dt, f_coeff
     real*8 :: kb
     real*8 :: temperature
     real*8 :: zr
     real*8, dimension(2) :: z
     real*8, dimension(3) :: rand
 
-    f_coeff = constants%friction_coeff
+    dt = integrator_data%delta_t
+    f_coeff = integrator_data%friction_coeff
     kb = constants%boltzmann
     temperature = system_data%temperature
     ! Get a random number for all 3 velocity components
@@ -464,61 +467,10 @@ contains
     endif
     !***********************************************************************!
 
-    !***********************************************************************!
-    ! print hydronium neighborhood for autoencoder project
-
-    ! print *, "BEGIN hydronium positions; step:", trajectory_step
-
-    ! h3o_index = hydronium_molecule_index(1)
-
-    ! do j_index = 1,4
-    !     j_atom = molecule_data(h3o_index)%atom_index(j_index)
-    !     x = atom_data%xyz(1,j_atom)
-    !     y = atom_data%xyz(2,j_atom)
-    !     z = atom_data%xyz(3,j_atom)
-    !     atype_index = atom_data%atom_type_index(j_atom)
-    !     write(*, '(A, I, F10.4, F10.4, F10.4)'), atype_name(atype_index), j_atom, x,y,z
-    ! end do
-
-    ! print *, "END hydronium positions"
-
-    ! oxygen_index = molecule_data(h3o_index)%atom_index(1)
-    ! verlet_start = verlet_list_data%verlet_point(oxygen_index)
-    ! verlet_finish = verlet_list_data%verlet_point(oxygen_index + 1) - 1
-    ! n_neighbors = verlet_finish - verlet_start + 1
-
-    ! write (*, '(A, I4, A, I)'), "BEGIN hydronium neighborhood (", n_neighbors, " atoms); step:", trajectory_step
-
-    ! ! find all neighbor indices of the oxygen atom
-    ! do j_index=verlet_start, verlet_finish
-    !     j_atom = verlet_list_data%neighbor_list(j_index)
-    !     x = atom_data%xyz(1,j_atom)
-    !     y = atom_data%xyz(2,j_atom)
-    !     z = atom_data%xyz(3,j_atom)
-    !     atype_index = atom_data%atom_type_index(j_atom)
-    !     write(*, '(A, I, F10.4, F10.4, F10.4)'), atype_name(atype_index), j_atom, x,y,z
-    ! end do
-
-    ! print *, "END hydronium neighborhood"
-
-
-    !***********************************************************************!
-
-
     ! define local variables for convenience
     dt = integrator_data%delta_t
     conv_fac = constants%conv_kJmol_ang2ps2gmol  ! converts kJ/mol to A^2/ps^2*g/mol
     total_atoms = system_data%total_atoms
-
-    !h3o_ind = hydronium_molecule_index(1)
-    !atom_num = molecule_data(h3o_ind)%atom_index
-
-    !if ( mod( trajectory_step, integrator_data%n_output ) == 0 ) then
-    !do i=atom_num(1), atom_num(4)
-    !    write(file_io_data%ofile_hamiltonian_file_h,*) atom_data%velocity(:, i)
-    !enddo
-    !write(file_io_data%ofile_hamiltonian_file_h,*) ""    
-   ! endif
 
 
     !******************* Velocity Verlet Integrator or Langevin Leapfrog 
@@ -535,7 +487,7 @@ contains
              Case("NVE")
              atom_data%velocity(:,i_atom) = atom_data%velocity(:,i_atom) + dt / 2d0 / atom_data%mass(i_atom) * atom_data%force(:,i_atom) * conv_fac
              Case Default
-             call langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
+             call langevin_integrator( system_data, atom_data, integrator_data, i_atom, conv_fac )
              End Select
 
              ! now calculate new atomic coordinates at delta_t
@@ -570,7 +522,7 @@ contains
              Case("NVE")
              atom_data%velocity(:,i_atom) = atom_data%velocity(:,i_atom) + dt / 2d0 / atom_data%mass(i_atom) * atom_data%force(:,i_atom) * conv_fac
              Case Default
-             call langevin_integrator( system_data, atom_data, i_atom, conv_fac, dt )
+             call langevin_integrator( system_data, atom_data, integrator_data, i_atom, conv_fac )
              End Select
 
 

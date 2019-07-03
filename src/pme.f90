@@ -30,7 +30,7 @@ contains
   subroutine pme_reciprocal_space_energy_force( system_data, atom_data, PME_data )
     use global_variables
     use MKL_DFTI
-    use omp_lib
+!    use omp_lib
     implicit none
     type(system_data_type), intent(inout)   :: system_data
     type(atom_data_type) , intent(inout)    :: atom_data
@@ -163,17 +163,17 @@ contains
     ! zero reciprocal space forces
     PME_data%force_recip=0d0
 
-    call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,PME_data, xyz_scale, atom_data, K, system_data,kk,split_do,constants) 
-    !$OMP DO SCHEDULE(dynamic, split_do)
+!    call OMP_SET_NUM_THREADS(n_threads)
+!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,PME_data, xyz_scale, atom_data, K, system_data,kk,split_do,constants) 
+!    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,total_atoms
        ! the reason we pass theta_conv_Q separately is we want the flexibility
        ! to input a temporary array for this in the ms_evb code
        call derivative_grid_Q(force, PME_data%theta_conv_Q, atom_data%charge, xyz_scale, i_atom, PME_data,kk, constants%conv_e2A_kJmol )
        PME_data%force_recip(:,i_atom)=PME_data%force_recip(:,i_atom)+force(:)
     enddo
-    !$OMP END DO NOWAIT
-    !$OMP END PARALLEL
+!    !$OMP END DO NOWAIT
+!    !$OMP END PARALLEL
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -198,7 +198,7 @@ contains
   !*****************************************************************
   subroutine grid_Q(Q,chg,xyz, PME_data)
     use global_variables
-    use omp_lib
+!    use omp_lib
     real*8, intent(in), dimension(:) :: chg
     real*8, intent(in), dimension(:,:) :: xyz
     type(PME_data_type), intent(in)    :: PME_data
@@ -223,13 +223,13 @@ contains
     endif
 
     ! parameter spline_grid undeclared, but ok
-    call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,PME_data) REDUCTION(+:Q)
+!    call OMP_SET_NUM_THREADS(n_threads)
+!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,PME_data) REDUCTION(+:Q)
        ! local variables for convenience
        K=PME_data%pme_grid
        spline_order=PME_data%spline_order
        spline_grid=PME_data%spline_grid
-    !$OMP DO SCHEDULE(dynamic, split_do)
+!    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,tot_atoms
        u=xyz(:,i_atom)
        nearpt=floor(u)
@@ -273,8 +273,8 @@ contains
           enddo
        enddo
     enddo
-    !$OMP END DO NOWAIT
-    !$OMP END PARALLEL
+!    !$OMP END DO NOWAIT
+!    !$OMP END PARALLEL
 
   end subroutine grid_Q
 

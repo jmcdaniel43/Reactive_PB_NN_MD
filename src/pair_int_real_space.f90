@@ -63,7 +63,7 @@ contains
     use global_variables
     use MKL_DFTI
     use routines
-    use omp_lib
+!    use omp_lib
     implicit none
 
     Type(system_data_type),intent(inout)             :: system_data
@@ -86,12 +86,10 @@ contains
     endif
     !***********************************************************************!
 
-
     !******************************** inter-molecular real-space interactions *******************************
 
     !*******   pme real space energy and force subroutine
     call pairwise_real_space_verlet( system_data , atom_data , verlet_list_data , PME_data )
-
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -141,7 +139,7 @@ contains
   subroutine pairwise_real_space_verlet( system_data , atom_data , verlet_list_data , PME_data  )
     use global_variables
     use routines
-    use omp_lib
+!    use omp_lib
     implicit none
     type(system_data_type), intent(inout) :: system_data
     type(atom_data_type), intent(inout)   :: atom_data
@@ -150,13 +148,13 @@ contains
 
     !****** note the storage dimensions of these arrays, consistent with atom_data%force
     real*8, dimension(3,size(atom_data%force(1,:))) :: local_force
-    real*8, dimension(3,size(atom_data%force(1,:)),n_threads) :: temp_force
+!    real*8, dimension(3,size(atom_data%force(1,:)),n_threads) :: temp_force
 
     Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_verlet , pairwise_neighbor_data_cutoff_lj, pairwise_neighbor_data_cutoff_sapt, pairwise_neighbor_data_cutoff
 
     integer , dimension(:) , allocatable    :: cutoff_mask_lj, cutoff_mask_sapt, cutoff_mask
     real*8, dimension(3,3)   :: box, xyz_to_box_transform
-    real*8                   :: real_space_cutoff2, alpha_sqrt, erf_factor, E_elec, E_vdw, E_elec_local , E_vdw_local_lj, E_vdw_local_sapt
+    real*8                   :: real_space_cutoff2, E_elec, E_vdw, E_elec_local , E_vdw_local_lj, E_vdw_local_sapt
     integer                  :: split_do, total_atoms, n_neighbors, n_cutoff_lj, n_cutoff_sapt, n_cutoff,  size_vdw_parameter
     integer :: i, i_atom, j_atom, thread_id, i_thread, verlet_start, verlet_finish, i_index
     real*8, dimension(3)     :: xyz_i_atom(3)
@@ -165,7 +163,7 @@ contains
     E_elec=0d0
     E_vdw =0d0
     local_force = 0.D0
-    temp_force= 0.D0
+!    temp_force= 0.D0
     ! real_space_cutoff is a global variable
     real_space_cutoff2 = real_space_cutoff ** 2
 
@@ -173,8 +171,6 @@ contains
     total_atoms          = system_data%total_atoms
     box                  = system_data%box
     xyz_to_box_transform = system_data%xyz_to_box_transform 
-    alpha_sqrt           = PME_data%alpha_sqrt
-    erf_factor           =  2.D0*alpha_sqrt/constants%pi_sqrt
     ! this is (maximum) number of parameters that we need for VDWs interaction
     size_vdw_parameter=size(atype_vdw_parameter(1,1,:))
 
@@ -187,12 +183,12 @@ contains
 
 
     !**************************************** use Verlet list ****************************************************************
-    call OMP_SET_NUM_THREADS(n_threads)
-    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, atype_vdw_type, size_vdw_parameter, erf_factor, alpha_sqrt,verlet_list_data, PME_data, constants, Tang_Toennies_table, dTang_Toennies_table) REDUCTION(+:E_elec,E_vdw)
-    !$OMP CRITICAL
+!    call OMP_SET_NUM_THREADS(n_threads)
+!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, atype_vdw_type, size_vdw_parameter, verlet_list_data, PME_data%erfc_table, PME_data%ewaldscale_table, PME_data%erfc_dx, Tang_Toennies_table, dTang_Toennies_table) REDUCTION(+:E_elec,E_vdw)
+!    !$OMP CRITICAL
     local_force = 0.D0
-    !$OMP END CRITICAL
-    !$OMP DO SCHEDULE(DYNAMIC,split_do)
+!    !$OMP END CRITICAL
+!    !$OMP DO SCHEDULE(DYNAMIC,split_do)
     ! note that in Verlet list, neighbors are only stored if j_atom > i_atom , for efficiency and to avoid double counting
     do i_atom=1 , total_atoms
        xyz_i_atom(:) = atom_data%xyz(:,i_atom)
@@ -274,16 +270,19 @@ contains
           ! now calculate pairwise forces and energies for this atom and its neighbors         
           ! all of these subroutines should vectorize...
           if ( n_cutoff > 0 ) then
-             call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,  pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )  
+!             !DIR$ FORCEINLINE
+             call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,  pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, PME_data%erfc_table , PME_data%ewaldscale_table, PME_data%erfc_dx )  
           else
              E_elec_local = 0d0
           endif
           if ( n_cutoff_lj > 0 ) then
+!             !DIR$ FORCEINLINE
              call pairwise_real_space_LJ( E_vdw_local_lj , pairwise_neighbor_data_cutoff_lj%f_ij ,  pairwise_neighbor_data_cutoff_lj%dr, pairwise_neighbor_data_cutoff_lj%dr2 ,  pairwise_neighbor_data_cutoff_lj%atype_vdw_parameter )
           else
              E_vdw_local_lj = 0d0
           end if
           if ( n_cutoff_sapt > 0 ) then
+!             !DIR$ FORCEINLINE
              call pairwise_real_space_sapt( E_vdw_local_sapt, pairwise_neighbor_data_cutoff_sapt%f_ij, pairwise_neighbor_data_cutoff_sapt%dr,pairwise_neighbor_data_cutoff_sapt%dr2, pairwise_neighbor_data_cutoff_sapt%atype_vdw_parameter, Tang_Toennies_table, dTang_Toennies_table, Tang_Toennies_max, Tang_Toennies_grid )
           else
              E_vdw_local_sapt = 0d0
@@ -319,15 +318,17 @@ contains
     end do
     
 
-    !$OMP END DO NOWAIT
-    thread_id = OMP_GET_THREAD_NUM()
-    temp_force(:,:,thread_id+1)= local_force(:,:)
-    !$OMP END PARALLEL
+!    !$OMP END DO NOWAIT
+!    thread_id = OMP_GET_THREAD_NUM()
+!    temp_force(:,:,thread_id+1)= local_force(:,:)
+!    !$OMP END PARALLEL
 
+    atom_data%force = atom_data%force + local_force
 
-    do i_thread=1,n_threads
-       atom_data%force = atom_data%force + temp_force(:,:,i_thread)
-    enddo
+!    do i_thread=1,n_threads
+!       atom_data%force = atom_data%force + temp_force(:,:,i_thread)
+!    enddo
+
 
     system_data%E_elec = system_data%E_elec + E_elec
     system_data%E_vdw = system_data%E_vdw + E_vdw
@@ -400,14 +401,20 @@ contains
     integer, intent(in)    ::   i_mole_type, n_atom    
 
     ! we use two data structures, one for excluded interactions and one for non-excluded interactions
-    Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_excluded , pairwise_neighbor_data_nonexcluded, pairwise_neighbor_data_nonexcluded_lj, pairwise_neighbor_data_nonexcluded_sapt
-
+    Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_excluded , pairwise_neighbor_data_nonexcluded, pairwise_neighbor_data_nonexcluded_lj, pairwise_neighbor_data_nonexcluded_sapt, pairwise_neighbor_data_cutoff
+    ! cutoff mask for electrostatic interactions
+    integer, dimension(:), allocatable :: cutoff_mask
     integer :: i_atom, j_atom, i_type, j_type, i_index
-    integer :: index_excluded, index_nonexcluded, index_nonexcluded_sapt, index_nonexcluded_lj, n_excluded, n_nonexcluded, n_nonexcluded_lj, n_nonexcluded_sapt, size_vdw_parameter
-    real*8 :: alpha_sqrt , erf_factor, E_elec_local, E_vdw_local, E_vdw_local_lj, E_vdw_local_sapt
+    integer :: index_excluded, index_nonexcluded, index_nonexcluded_sapt, index_nonexcluded_lj, n_excluded, n_nonexcluded, n_nonexcluded_lj, n_nonexcluded_sapt, n_cutoff, size_vdw_parameter
+    real*8 :: alpha_sqrt , erf_factor, real_space_cutoff2, E_elec_local, E_vdw_local, E_vdw_local_lj, E_vdw_local_sapt
 
+    ! need these for intra_pme_exclusion
     alpha_sqrt           = PME_data%alpha_sqrt
     erf_factor           =  2.D0*alpha_sqrt/constants%pi_sqrt
+
+    ! real_space_cutoff is a global variable
+    real_space_cutoff2 = real_space_cutoff ** 2
+
     ! this is (maximum) number of parameters that we need for VDWs interaction
     size_vdw_parameter=size(atype_vdw_parameter(1,1,:))
     
@@ -513,10 +520,30 @@ contains
            call intra_pme_exclusion( E_elec_local , pairwise_neighbor_data_excluded%f_ij ,  pairwise_neighbor_data_excluded%dr, pairwise_neighbor_data_excluded%dr2, pairwise_neighbor_data_excluded%qi_qj, erf_factor , alpha_sqrt , constants%conv_e2A_kJmol )
            E_elec = E_elec + E_elec_local
        endif
-           
+       
+
+       if ( n_nonexcluded > 0 ) then    
+           ! apply cutoff to non-excluded electrostatic interactions.  This is important as the erfc_table, and ewaldscale_table tables are only tabulated up to the cutoff
+           allocate(cutoff_mask(n_nonexcluded))
+           cutoff_mask=0
+           do j_atom = 1, n_nonexcluded
+              if ( pairwise_neighbor_data_nonexcluded%dr2(j_atom) < real_space_cutoff2 ) then
+                 cutoff_mask(j_atom)=1
+              endif
+           enddo
+           n_cutoff = sum(cutoff_mask)
+           ! now allocate datastructure for atoms within cutoff distance, and apply cutoff mask
+           call allocate_pairwise_neighbor_data( pairwise_neighbor_data_cutoff, n_cutoff, size_vdw_parameter )
+           call apply_cutoff_mask( n_nonexcluded, pairwise_neighbor_data_cutoff, pairwise_neighbor_data_nonexcluded, cutoff_mask )
+           ! we don't need original data structure anymore....
+           call deallocate_pairwise_neighbor_data( pairwise_neighbor_data_nonexcluded )
+           ! done with cutoff mask
+           deallocate( cutoff_mask )
+       endif
+
        ! now add non-excluded intra-molecular real-space electrostatic and VDWs interactions
        if ( n_nonexcluded > 0 ) then
-           call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_nonexcluded%f_ij ,  pairwise_neighbor_data_nonexcluded%dr, pairwise_neighbor_data_nonexcluded%dr2,  pairwise_neighbor_data_nonexcluded%qi_qj, erf_factor , alpha_sqrt, PME_data%erfc_table , PME_data%erfc_grid , PME_data%erfc_max, constants%conv_e2A_kJmol )
+           call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr, pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, PME_data%erfc_table , PME_data%ewaldscale_table , PME_data%erfc_dx )
            if ( n_nonexcluded_lj > 0 ) then
                call pairwise_real_space_LJ( E_vdw_local_lj , pairwise_neighbor_data_nonexcluded_lj%f_ij ,  pairwise_neighbor_data_nonexcluded_lj%dr, pairwise_neighbor_data_nonexcluded_lj%dr2 , pairwise_neighbor_data_nonexcluded_lj%atype_vdw_parameter )
            else
@@ -542,9 +569,9 @@ contains
 
        ! add forces from non-excluded interactions...
        do i_index=1, n_nonexcluded
-           j_atom = pairwise_neighbor_data_nonexcluded%atom_index(i_index)
-           force_local(:,i_atom) = force_local(:,i_atom) + pairwise_neighbor_data_nonexcluded%f_ij(:,i_index)
-           force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_nonexcluded%f_ij(:,i_index)
+           j_atom = pairwise_neighbor_data_cutoff%atom_index(i_index)
+           force_local(:,i_atom) = force_local(:,i_atom) + pairwise_neighbor_data_cutoff%f_ij(:,i_index)
+           force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_cutoff%f_ij(:,i_index)
        enddo
 
        do i_index=1, n_nonexcluded_lj
@@ -562,7 +589,7 @@ contains
 
        ! deallocate data structures
        if ( n_nonexcluded > 0 ) then
-          call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_nonexcluded)
+          call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_cutoff)
           call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_nonexcluded_lj)
           call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_nonexcluded_sapt)
        endif
@@ -632,6 +659,8 @@ contains
 
   end subroutine pairwise_real_space_LJ
 
+
+
   !****************************************
   !this subroutine uses the modified Buckingham potential
   !from the SAPT force fields
@@ -649,27 +678,22 @@ contains
     
     real*8, dimension(size(dr2)) :: dr6, dr12, dr1, dr10, dr8
     real*8, dimension(4,size(dr2)) :: tt_table, dtt_table
-    integer :: i_atom
+    integer :: i_atom, i_index
 
      
      ! $omp simd
+     dr1 = sqrt(dr2)
      dr6 = dr2**3
-     dr12 = dr6**2
-     ! dr1 needed for force computation
-     dr1 = dsqrt(dr2)
-     dr8 = dr6 * dr2
-     dr10 = dr8 * dr2
-
-     tt_table(1,:) = Tang_Toennies_table(1,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
-     tt_table(2,:) = Tang_Toennies_table(2,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
-     tt_table(3,:) = Tang_Toennies_table(3,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
-     tt_table(4,:) = Tang_Toennies_table(4,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
-
-     dtt_table(1,:) = lj_parameters(2,:) * dTang_Toennies_table(1,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
-     dtt_table(2,:) = lj_parameters(2,:) * dTang_Toennies_table(2,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
-     dtt_table(3,:) = lj_parameters(2,:) * dTang_Toennies_table(3,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid)))
-     dtt_table(4,:) = lj_parameters(2,:) * dTang_Toennies_table(4,ceiling(lj_parameters(2,:) * dr1(:)/Tang_Toennies_max*dble(Tang_Toennies_grid))) 
+     dr8 = dr6*dr2
+     dr10 = dr8*dr2
+     dr12 = dr10*dr2
      
+     ! fill tables of damping functions
+     do i_atom = 1, size(dr2)
+        i_index = ceiling(lj_parameters(2,i_atom) * dr1(i_atom)/Tang_Toennies_max*dble(Tang_Toennies_grid))
+        tt_table(:,i_atom) = Tang_Toennies_table(:,i_index)
+        dtt_table(:,i_atom) = lj_parameters(2,i_atom) * dTang_Toennies_table(:,i_index)
+     enddo 
 
      E_vdw = sum(lj_parameters(1,:) * exp(-1*lj_parameters(2,:)*dr1(:)) - tt_table(1,:) * lj_parameters(3,:)/dr6(:) - tt_table(2,:) * lj_parameters(4,:)/dr8(:) - tt_table(3,:) * lj_parameters(5,:)/dr10(:) - tt_table(4,:) * lj_parameters(6,:)/dr12(:))
 
@@ -690,29 +714,35 @@ dr1(i_atom) * dtt_table(4,i_atom) * lj_parameters(6,i_atom)/dr12(i_atom) - tt_ta
   ! this subroutine computes the real space Ewald (PME) force and energy
   ! contribution for pairwise interactions
   !**************************************************
-  subroutine pairwise_real_space_ewald( E_elec , f_ij ,  dr, dr2, qi_qj, erf_factor , alpha_sqrt, erfc_table , erfc_grid , erfc_max, conv_e2A_kJmol )
+  subroutine pairwise_real_space_ewald( E_elec , f_ij ,  dr, dr2, qi_qj, erfc_table , ewaldscale_table , erfc_dx )
      real*8, intent(out) :: E_elec
      real*8, dimension(:,:), intent(inout) :: f_ij
      real*8, dimension(:), intent(in)  :: dr2 , qi_qj
      real*8, dimension(:,:), intent(in) :: dr
-     real*8, dimension(:),  intent(in) :: erfc_table
-     integer, intent(in)                :: erfc_grid
-     real*8, intent(in)                 :: erfc_max, alpha_sqrt, erf_factor, conv_e2A_kJmol
+     real*8, dimension(:),  intent(in) :: erfc_table, ewaldscale_table
+     real*8, intent(in)                 :: erfc_dx
 
-     real*8, dimension(size(dr2)) :: dr_mag, erfc_value
+     real*8, dimension(size(dr2)) :: dr_mag, dr_mag3, erfc_value, ewaldscale_value
      integer :: i_atom
-  
+ 
      ! $omp simd
-
      dr_mag=sqrt(dr2)
-     ! make array with values of the complementary error function applied to alpha_sqrt * distance
-     erfc_value(:) = erfc_table(ceiling((dr_mag(:)*alpha_sqrt)/erfc_max*dble(erfc_grid)))
+  
+     dr_mag3 = dr2 * dr_mag
 
-     E_elec = sum( qi_qj / dr_mag * erfc_value * conv_e2A_kJmol )  ! conversion is e^2/Angstrom to kJ/mol
+     ! interpolation of tables to get erfc_value, ewaldscale_value
+     !DIR$ FORCEINLINE
+     call linear_interpolation_ewald_tables( erfc_value , ewaldscale_value, erfc_table , ewaldscale_table , dr_mag , erfc_dx )
+
+     E_elec = sum( qi_qj / dr_mag * erfc_value )  ! unit conversion from e^2/Angstrom to kJ/mol is incorporated into erfc_value from table
 
      ! this should vectorize...
      do i_atom=1, size(dr2)
-        f_ij(:,i_atom)  = f_ij(:,i_atom) + qi_qj(i_atom) / dr_mag(i_atom) * dr(:,i_atom) * ( erfc_value(i_atom) / dr2(i_atom) + erf_factor * exp(-(alpha_sqrt * dr_mag(i_atom)) **2) / dr_mag(i_atom) ) * conv_e2A_kJmol
+        ! we use tables to compute the following, where erfc_value is erfc evaluated for alpha_sqrt*r. 
+        ! unit conversion from e^2/Angstrom to kJ/mol is incorporated into ewaldscale_value from table
+        ! f_ij(:,i_atom)  = f_ij(:,i_atom) + qi_qj(i_atom) / dr_mag(i_atom) * dr(:,i_atom) * ( erfc_value(i_atom) / dr2(i_atom) + erf_factor * exp(-(alpha_sqrt * dr_mag(i_atom)) **2) / dr_mag(i_atom) ) * conv_e2A_kJmol
+
+        f_ij(:,i_atom)  = f_ij(:,i_atom) + qi_qj(i_atom) / dr_mag3(i_atom) * dr(:,i_atom) * ewaldscale_value(i_atom) 
      enddo
 
      ! $omp end simd
@@ -720,7 +750,32 @@ dr1(i_atom) * dtt_table(4,i_atom) * lj_parameters(6,i_atom)/dr12(i_atom) - tt_ta
   end subroutine pairwise_real_space_ewald
 
 
+  !********************************
+  ! this subroutine evaluates the ewald lookup functions
+  ! by linearly interpolating their table values.
+  ! This allows the use of much smaller lookup tables,
+  ! while preserving accuracy
+  !********************************
+  subroutine linear_interpolation_ewald_tables( erfc_value , ewaldscale_value, erfc_table , ewaldscale_table , dr_mag , erfc_dx )
+     real*8, dimension(:),  intent(out) :: erfc_value, ewaldscale_value
+     real*8, dimension(:),  intent(in)  :: erfc_table, ewaldscale_table
+     real*8, dimension(:),  intent(in)  :: dr_mag
+     real*8, intent(in)                 :: erfc_dx
 
+     integer :: i_atom, i_index
+     real*8  :: x1, coeff1, coeff2
+
+     do i_atom = 1, size(dr_mag)
+       ! tables are grid in subroutine initialize_energy_force , table(1) holds r=0, table(2) holds r=dx, etc. 
+       x1 = dr_mag(i_atom)/erfc_dx
+       i_index = ceiling(x1)
+       coeff2 = (x1 + 1d0) - i_index
+       coeff1 = 1d0 - coeff2
+       erfc_value(i_atom) = coeff1*erfc_table(i_index) + coeff2*erfc_table(i_index+1)
+       ewaldscale_value(i_atom) = coeff1*ewaldscale_table(i_index) + coeff2*ewaldscale_table(i_index+1)
+     enddo
+
+  end subroutine linear_interpolation_ewald_tables
 
 
   !************************************************

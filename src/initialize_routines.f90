@@ -49,10 +49,11 @@ contains
        open( file_io_data%ofile_traj_file_h, file=file_io_data%ofile_traj, status='old' )
        call scan_grofile_restart( file_io_data%ofile_traj_file_h, n_old_trajectory )
        call read_gro( file_io_data%ofile_traj_file_h, system_data, molecule_data, atom_data )
+    !****** not restarting trajectory....
     Case default
-    open( file_io_data%ifile_gro_file_h, file=file_io_data%ifile_gro, status='old' )
-    call read_gro( file_io_data%ifile_gro_file_h, system_data, molecule_data, atom_data )
-    close( file_io_data%ifile_gro_file_h )
+       open( file_io_data%ifile_gro_file_h, file=file_io_data%ifile_gro, status='old' )
+       call read_gro( file_io_data%ifile_gro_file_h, system_data, molecule_data, atom_data )
+       close( file_io_data%ifile_gro_file_h )
     End Select
     ! ******************  Allocate remainder of atom_data arrays, initialize
     total_atoms = system_data%total_atoms
@@ -192,8 +193,7 @@ contains
     Type(integrator_data_type), intent(in)              :: integrator_data
 
     integer:: i,length(3),status, pme_grid
-    real*8 :: a(3), b(3), c(3), ka(3), kb(3), kc(3),kk(3,3)
-    real*8 :: x
+    real*8 :: x, alphasqrt_r, r
 
 
     !************************************* initialize ewald/pme ************************************************!
@@ -236,15 +236,19 @@ contains
        endif
 
     !  allocate and grid complementary error function
-    allocate(PME_data%erfc_table(PME_data%erfc_grid))
-    ! make sure erfc_max is set big enough to cover distances up to the cutoff
-    if ( PME_data%erfc_max < PME_data%alpha_sqrt * real_space_cutoff ) then
-       write(*,*) "please increase setting of erfc_max.  Must have erfc_max > alpha_sqrt * cutoff "
-       stop
-    end if
+    allocate(PME_data%erfc_table(PME_data%erfc_grid + 1))  ! add 1 to size, since we're going to use ceiling for table index
+    !  allocate and grid ewald table for derivatives
+    allocate(PME_data%ewaldscale_table(PME_data%erfc_grid + 1))
 
-    do i=1,PME_data%erfc_grid
-       PME_data%erfc_table(i)= erfc(PME_data%erfc_max/dble(PME_data%erfc_grid)*dble(i))
+    ! size of grid spacing, real_space_cutoff is global variable
+    PME_data%erfc_dx = real_space_cutoff/dble(PME_data%erfc_grid)
+    
+    ! grid tables. Input to the tables will be r
+    do i=1,PME_data%erfc_grid + 1
+       r = dble(i) *  PME_data%erfc_dx
+       alphasqrt_r = r * PME_data%alpha_sqrt
+       PME_data%erfc_table(i)= erfc(alphasqrt_r) * constants%conv_e2A_kJmol
+       PME_data%ewaldscale_table(i) = PME_data%erfc_table(i) + alphasqrt_r*2D0/constants%pi_sqrt*exp(-alphasqrt_r*alphasqrt_r) * constants%conv_e2A_kJmol 
     enddo
 
     ! initialize factorial array

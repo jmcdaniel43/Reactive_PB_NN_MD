@@ -871,7 +871,6 @@ contains
     write( log_file, *) "********** Tabulated Functions (numerical accuracy)  **********"
     write( log_file, *) "Bspline table size              ", PME_data%spline_grid
     write( log_file, *) "erfc    table size              ", PME_data%erfc_grid
-    write( log_file, *) "erfc    max value               ", PME_data%erfc_max
     ! print ms-evb parameters 
     Select Case(ms_evb_simulation)
     Case("yes")

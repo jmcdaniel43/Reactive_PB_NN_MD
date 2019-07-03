@@ -143,10 +143,11 @@ implicit none
 
   !***************  defined data type for integrator
   type integrator_data_type
-   character(3)           :: ensemble  ! currently NVE molecular dynamics, or minimization
-   integer                :: n_step    ! number of integration steps
-   integer                :: n_output  ! frequency to print trajectory
-   real*8                 :: delta_t   ! time step for integration (ps)
+   character(3)           :: ensemble         ! currently NVE molecular dynamics, or minimization
+   integer                :: n_step           ! number of integration steps
+   integer                :: n_output         ! frequency to print trajectory
+   real*8                 :: delta_t          ! time step for integration (ps)
+   real*8                 :: friction_coeff   ! Friction coefficient for Langevin integrator, 1/ps
   end type integrator_data_type
 
 
@@ -223,7 +224,6 @@ implicit none
   real*8      :: conv_kJmol_ang2ps2gmol       ! converts kJ/mol to A^2/ps^2*g/mol
   real*8      :: conv_e2A_kJmol               ! converts e^2/A to kJ/mol
   real*8      :: boltzmann                    ! kB, kJ/mol/K
-  real*8      :: friction_coeff               ! Friction coefficient for Langevin integrator, 1/ps
  end type constants_data_type
 
  Type(constants_data_type) :: constants
@@ -265,9 +265,10 @@ implicit none
   real*8                               ::  E_recip
   integer                              ::  spline_grid
   integer                              ::  erfc_grid
-  real*8                               ::  erfc_max        ! this is max value up to which erfc is grid
+  real*8                               ::  erfc_dx        ! this is determined by  real_space_cutoff / erfc_grid 
   real*8, dimension(:),allocatable     ::  B6_spline,B5_spline,B4_spline,B3_spline
   real*8, dimension(:),allocatable     ::  erfc_table
+  real*8, dimension(:),allocatable     ::  ewaldscale_table
  end type PME_data_type
 
 
@@ -393,7 +394,6 @@ implicit none
   constants%conv_kJmol_ang2ps2gmol = 100d0  ! converts kJ/mol to A^2/ps^2*g/mol
   constants%conv_e2A_kJmol = 1389.35465     ! converts e^2/A to kJ/mol
   constants%boltzmann = 0.008314462d0       ! kB, kJ/mol/K
-  constants%friction_coeff = 0.1d0            ! Friction coefficient for the Langevin integrator, 1/ps
 
   ! fill in verlet list parameters
   verlet_list_data%safe_verlet= 1.2 ! need bigger for long lamallae 1.6
@@ -401,8 +401,7 @@ implicit none
 
   ! fill in sizes of PME lookup tables
   PME_data%spline_grid=100000
-  PME_data%erfc_grid=1000000      !1000000
-  PME_data%erfc_max=10d0       ! this is max value up to which erfc is grid
+  PME_data%erfc_grid=100000      !1000000
 
 
   ! name of velocity checkpoint file
