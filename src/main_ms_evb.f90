@@ -49,7 +49,9 @@ program main_ms_evb
   Case("no")
      open( file_io_data%ofile_traj_file_h, file=file_io_data%ofile_traj, status='new' )
      open( file_io_data%ofile_log_file_h,  file=file_io_data%ofile_log, status='new' )
-     open( file_io_data%ofile_hamiltonian_file_h, file=file_io_data%ofile_hamiltonian, status='new' )
+     if (debug .eq. 2) then
+     open( file_io_data%ofile_a_file_h, file=file_io_data%ofile_a, status='new' )
+     endif
 !     Select Case( checkpoint_velocity )
 !     Case("yes")
         ! status may be new, or append to old
@@ -85,7 +87,7 @@ program main_ms_evb
 
   Select Case( restart_trajectory )
   Case("no")
-     call sample_atomic_velocities(system_data%n_mole, system_data%total_atoms, system_data%temperature, molecule_data, atom_data )
+     call sample_atomic_velocities(system_data%n_mole, system_data%total_atoms, system_data%initial_temp, molecule_data, atom_data )
   End Select
 
   call calculate_kinetic_energy( system_data%kinetic_energy, system_data%total_atoms, atom_data%mass, atom_data%velocity, constants%conv_kJmol_ang2ps2gmol )
@@ -99,7 +101,7 @@ program main_ms_evb
 
   do i_step = 1, integrator_data%n_step - n_old_trajectory
     
-     ! this is global variable which may be used for printing in ms-evb
+     ! this is a global variable which may be used for printing in ms-evb
      trajectory_step = n_old_trajectory + i_step
 
      call  mc_sample( system_data , molecule_data , atom_data, integrator_data, verlet_list_data, PME_data, file_io_data )

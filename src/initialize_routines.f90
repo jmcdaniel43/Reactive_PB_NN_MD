@@ -277,7 +277,7 @@ contains
     !**************************** Get initial forces and energy *************************************!
     Select Case(ms_evb_simulation)
     Case("yes")
-       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data,integrator_data%n_output )
+       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data,integrator_data%n_output, integrator_data, trajectory_step )
     Case("no")
        call calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     End Select

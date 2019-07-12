@@ -38,13 +38,14 @@ implicit none
 ! these variables determine whether to grid expensive functions in memory.  Code is much faster when these are set to 'yes'
   character(3)  :: grid_Tang_Toennies ! grid damping functions
 
+!Change to yes if you're running a very small system and the verlet list is
+!causing simulation problems
+  character(3), parameter  :: verlet_allpairs="no"
+
   character(3), parameter  :: ms_evb_simulation="yes"   ! ms_evb
   character(3), parameter  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
 
 !***********************************************************************************************
-
-
-
 
   !***********************************************************
   !                         MS-EVB3 parameters
@@ -128,6 +129,7 @@ implicit none
    real*8, dimension(3,3) :: xyz_to_box_transform  ! transformation matrix to box vectors
    real*8                 :: volume
    real*8                 :: temperature      ! temperature for generating Maxwell-Boltzmann velocities (no thermostat yet)
+   real*8                 :: initial_temp     ! Variable for starting the simulation at another temperature
    real*8                 :: pressure         ! pressure for barostat in bar
    integer                :: barofreq         ! frequency that the barostat will attempt to modify the system
    real*8                 :: baroscale        ! initial scale used to perform Monte Carlo NPT
@@ -146,8 +148,8 @@ implicit none
    character(3)           :: ensemble         ! currently NVE molecular dynamics, or minimization
    integer                :: n_step           ! number of integration steps
    integer                :: n_output         ! frequency to print trajectory
+   real*8                 :: friction_coeff   ! Used for Langevin integrator
    real*8                 :: delta_t          ! time step for integration (ps)
-   real*8                 :: friction_coeff   ! Friction coefficient for Langevin integrator, 1/ps
   end type integrator_data_type
 
 
@@ -202,7 +204,7 @@ implicit none
   character(MAX_FN) :: ofile_traj
   character(MAX_FN) :: ofile_log
   character(MAX_FN) :: ofile_hop
-  character(MAX_FN) :: ofile_hamiltonian
+  character(MAX_FN) :: ofile_a
   integer           :: ifile_gro_file_h  ! these are the file handles
   integer           :: ifile_ffpmt_file_h 
   integer           :: ifile_top_file_h 
@@ -211,7 +213,7 @@ implicit none
   integer           :: ofile_traj_file_h 
   integer           :: ofile_log_file_h 
   integer           :: ofile_hop_file_h 
-  integer           :: ofile_hamiltonian_file_h
+  integer           :: ofile_a_file_h
  end type file_io_data_type
 
 
@@ -224,6 +226,7 @@ implicit none
   real*8      :: conv_kJmol_ang2ps2gmol       ! converts kJ/mol to A^2/ps^2*g/mol
   real*8      :: conv_e2A_kJmol               ! converts e^2/A to kJ/mol
   real*8      :: boltzmann                    ! kB, kJ/mol/K
+  real*8      :: friction_coeff               ! Friction coefficient for Langevin integrator, 1/ps
  end type constants_data_type
 
  Type(constants_data_type) :: constants
@@ -416,10 +419,8 @@ implicit none
   file_io_data%ofile_traj_file_h=95
   file_io_data%ofile_log_file_h=96
   file_io_data%ofile_hop_file_h=97
-  file_io_data%ofile_hamiltonian_file_h=98
-
+  file_io_data%ofile_a_file_h=98
 
   end subroutine initialize_constants
-
 
 end module

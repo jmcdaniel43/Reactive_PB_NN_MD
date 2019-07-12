@@ -25,8 +25,6 @@ contains
     type(PME_data_type)     , intent(inout)      :: PME_data
     type(file_io_data_type) , intent(in)         :: file_io_data
 
-    ! print*, trajectory_step
-
     Select Case( integrator_data%ensemble )
     Case("NPT")
         if (modulo(trajectory_step, system_data%barofreq) == 0) then
@@ -311,7 +309,7 @@ contains
       !************** get energy ****************!
           Select Case(ms_evb_simulation)
           Case("yes")
-              call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data%n_output )
+              call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data%n_output, integrator_data, trajectory_step )
           Case("no")
               call calculate_total_force_energy(system_data, molecule_data, atom_data, verlet_list_data, PME_data)
           End Select
@@ -504,12 +502,15 @@ contains
     !**********************get total forces and energies*****************************!
     Select Case(ms_evb_simulation)
     Case("yes")
-       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data%n_output )
+       call ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data%n_output, integrator_data, trajectory_step )
     Case("no")
        call calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
     End Select
     !********************************************************************************!
 
+  !  if ( mod( trajectory_step, integrator_data%n_output ) == 0 ) then 
+  !  call print_forces( file_io_data%ofile_force_file_h, trajectory_step, system_data, molecule_data, atom_data, integrator_data ) 
+  !  endif
 
      ! now final velocities
     do i_atom = 1, total_atoms
@@ -547,9 +548,5 @@ contains
     !***********************************************************************!
 
   end subroutine md_integrate_atomic
-
-
-
-
 
 end module md_integration

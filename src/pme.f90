@@ -142,8 +142,6 @@ contains
        PME_data%E_recip=pme_Erecip
     End Select
 
-
-
     !*** now compute forces on atoms
     ! decide how to split the parallel section
     if (n_threads .eq. 1 ) then
