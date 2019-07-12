@@ -171,10 +171,7 @@ contains
        end if
     end do
 
-
   end subroutine evb_consistency_checks
-
-
 
   !*************************
   ! this subroutine calculates the total force and energy
@@ -188,29 +185,30 @@ contains
   ! global :: hydronium_molecule_index, atom_index, molecule_index
   !
   !*************************
-  subroutine ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, n_output  )
+  subroutine ms_evb_calculate_total_force_energy( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, n_output, integrator_data, trajectory_step  )
     type(system_data_type), intent(inout)      :: system_data
     type(molecule_data_type), dimension(:), intent(inout)    :: molecule_data
     type(atom_data_type), intent(inout)        :: atom_data
     type(verlet_list_data_type), intent(inout) :: verlet_list_data
+    type( integrator_data_type ), intent(in)    :: integrator_data
     type(PME_data_type)   , intent(inout)      :: PME_data
     type(file_io_data_type), intent(in)        :: file_io_data
     integer, intent(in)                        :: n_output
+    integer, intent(in)                        :: trajectory_step
 
     integer :: i_mole_hydronium, new_i_mole_hydronium, principle_diabat
-    integer   :: flag_junk
+    integer :: flag_junk
 
     if ( n_hydronium_molecules > 1 ) then
        stop "can't have more than 1 hydronium"
     end if
-
 
     ! in principle, we have this array if there is more than one excess proton. 
     ! right now, MS-EVB is implemented for only 1 proton
 
     i_mole_hydronium = hydronium_molecule_index(1)
 
-    call construct_evb_hamiltonian( i_mole_hydronium,  system_data, molecule_data, atom_data, verlet_list_data, PME_data   )
+    call construct_evb_hamiltonian( i_mole_hydronium,  system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data )
 
     ! global energy and force, system_data%potential_energy and atom_data%force will be updated.  These are currently the energy and force of the
     ! principle diabat, but will be updated to the adiabatic energy and force of the diagonalized MS-EVB Hamilonian
@@ -241,11 +239,7 @@ contains
     deallocate( evb_forces_store )
     deallocate( Q_grid_diabats )
 
-
   end subroutine ms_evb_calculate_total_force_energy
-
-
-
 
   !**************************
   ! this subroutine calculates the adiabatic energy
@@ -389,7 +383,7 @@ contains
   ! molecule_data
   ! 
   !************************************
-  subroutine construct_evb_hamiltonian( i_mole_principle, system_data, molecule_data, atom_data, verlet_list_data, PME_data )
+  subroutine construct_evb_hamiltonian( i_mole_principle, system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data )
     use total_energy_forces
     integer, intent(in) :: i_mole_principle
     type(system_data_type) , intent(inout)      :: system_data
@@ -397,6 +391,7 @@ contains
     type(atom_data_type)   , intent(inout)      :: atom_data
     type(verlet_list_data_type), intent(inout)  :: verlet_list_data
     type(PME_data_type) , intent(inout)         :: PME_data
+    type(file_io_data_type), intent(in)               :: file_io_data
 
     integer ::  diabat_index_donor,  i_mole_donor, store_index
     real*8  ::  E_ms_evb_repulsion, E_reference
@@ -479,7 +474,7 @@ contains
 
 
     ! now update energies for each diabat.  This takes care of everything except the reciprocal space component, which is done below
-    call evb_hamiltonian_elements_donor_acceptor( i_mole_principle, system_data , molecule_data, atom_data, PME_data, store_index )
+    call evb_hamiltonian_elements_donor_acceptor( i_mole_principle, system_data , molecule_data, atom_data, PME_data, store_index, file_io_data )
 
 
     !****************************timing**************************************!
@@ -643,12 +638,13 @@ contains
   !  where the new data structures take on the topology
   !  of the particular diabat
   !****************************************
-  subroutine evb_hamiltonian_elements_donor_acceptor( i_mole_principle, system_data, molecule_data, atom_data, PME_data, store_index )
+  subroutine evb_hamiltonian_elements_donor_acceptor( i_mole_principle, system_data, molecule_data, atom_data, PME_data, store_index, file_io_data )
     integer, intent(in) :: i_mole_principle
     type(system_data_type),intent(in) :: system_data
     type(molecule_data_type),dimension(:),intent(in) :: molecule_data
     type(atom_data_type), intent(in)                 :: atom_data
     type(PME_data_type), intent(in)                  :: PME_data
+    type(file_io_data_type) , intent(in)                  :: file_io_data
     integer,  intent(inout)                             :: store_index
 
     integer :: i_diabat, diabat_index_donor
@@ -675,7 +671,7 @@ contains
 
     ! loop over diabats, excluding principle diabat
 !    call OMP_SET_NUM_THREADS(n_threads)
-!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, system_data, molecule_data, atom_data, PME_data,  hydronium_molecule_index, i_mole_principle, diabat_index,  evb_hamiltonian, evb_diabat_coupling_matrix, store_index ) 
+!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, system_data, molecule_data, atom_data, PME_data,  hydronium_molecule_index, i_mole_principle, diabat_index,  evb_hamiltonian, evb_diabat_coupling_matrix, store_index, file_io_data ) 
 !    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_diabat = 2, diabat_index
        call evb_create_diabat_data_structures( atom_data_diabat, molecule_data_diabat, system_data_diabat, atom_data, molecule_data , system_data , hydronium_molecule_index_temp, hydronium_molecule_index )
@@ -692,7 +688,7 @@ contains
        !************************************* calculate off-diagonal diabatic coupling, energy and force
        ! here, the data structures should be in acceptor topology, after the call to ms_evb_diabat_force_energy
        ! note the atom_data_diabat%force array and system_data_diabat%potential_energy will be reinitialized to zero in this subroutine, before computing off-diagonal terms
-       call evb_diabatic_coupling( i_diabat, i_mole_principle, system_data_diabat, atom_data_diabat, molecule_data_diabat )
+       call evb_diabatic_coupling( i_diabat, i_mole_principle, system_data_diabat, atom_data_diabat, molecule_data_diabat, file_io_data )
 
        ! get donor diabat for which this coupling was calculated
        diabat_index_donor = evb_diabat_coupling_matrix(i_diabat)
@@ -1059,11 +1055,12 @@ contains
   ! to calculate this interaction.  Therefore this term should 
   ! be order(N) to evaluate
   !************************************************
-  subroutine evb_diabatic_coupling( diabat_index, i_mole_principle, system_data_diabat, atom_data_diabat, molecule_data_diabat )
+  subroutine evb_diabatic_coupling( diabat_index, i_mole_principle, system_data_diabat, atom_data_diabat, molecule_data_diabat, file_io_data )
     integer, intent(in) :: i_mole_principle, diabat_index
     type(system_data_type), intent(inout)  :: system_data_diabat
     type(atom_data_type), intent(inout)    :: atom_data_diabat
-    type(molecule_data_type), dimension(:), intent(inout) :: molecule_data_diabat   
+    type(molecule_data_type), dimension(:), intent(inout) :: molecule_data_diabat  
+    type(file_io_data_type), intent(in)        :: file_io_data 
 
     !******** this is a local data structure with pointers that will be set
     ! to subarrays of atom_data arrays for the specific atoms in the molecule
@@ -1111,13 +1108,17 @@ contains
 
 
     ! set pointers for acceptor and donor molecules to atom_data data structures
-    call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=atom_data_diabat%force, atom_type_index=atom_data_diabat%atom_type_index )
-    call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=atom_data_diabat%force, atom_type_index=atom_data_diabat%atom_type_index )
+    call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=atom_data_diabat%force, atom_type_index=atom_data_diabat%atom_type_index, atom_name=atom_data_diabat%aname )
+    call return_molecule_block( single_molecule_data_acceptor , molecule_data_diabat(i_mole_acceptor)%n_atom, molecule_data_diabat(i_mole_acceptor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=atom_data_diabat%force, atom_type_index=atom_data_diabat%atom_type_index, atom_name=atom_data_diabat%aname )
 
     ! now calculate geometry dependent scale factor and its derivatives
     ! three derivatives are contained in the output dA array, in order:
     ! i_atom_donor, i_atom_acceptor, i_proton_donor
     call evb_diabatic_coupling_geometric( A , dA, Vconstij , i_mole_donor, i_atom_donor, i_mole_acceptor, i_atom_acceptor, system_data_diabat, molecule_data_diabat, single_molecule_data_donor, single_molecule_data_acceptor )
+
+    if (debug .eq. 2) then
+    call write_geometry( A, single_molecule_data_donor, single_molecule_data_acceptor, molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_acceptor)%n_atom, file_io_data%ofile_a_file_h )
+    endif
 
     ! now form evb diabatic coupling matrix element
     system_data_diabat%potential_energy = ( Vconstij + Vex ) * A
@@ -3826,5 +3827,169 @@ contains
 
   end subroutine check_evb_read
 
+  subroutine get_hbond_neighbors( h3o_ind, molecule_data, system_data, neighbor_list )
+    use global_variables
+    integer, intent(in) :: h3o_ind
+    type( molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type( system_data_type ), intent(in) :: system_data
+    integer, dimension(:), intent(out) :: neighbor_list
 
+    integer :: n_mol, h3o_mol, i_mol, mols, ind
+    real*8, dimension(3) :: spcfw_com, h3o_com, dr_com, shift
+
+    ind = 1
+    mols = 0
+    n_mol = system_data%n_mole
+    h3o_mol = molecule_data(h3o_ind)%molecule_type_index
+    h3o_com(:) = molecule_data(h3o_ind)%r_com(:)
+
+    do i_mol=1, n_mol
+        if (molecule_data(i_mol)%mname=='spcfw') then
+            spcfw_com =  molecule_data(i_mol)%r_com(:)
+            shift = pbc_shift( h3o_com, spcfw_com, system_data%box, system_data%xyz_to_box_transform )
+            dr_com = pbc_dr( h3o_com, spcfw_com, shift)
+            if ( dot_product( dr_com, dr_com ) < evb_first_solvation_cutoff **2 ) then
+                write(*,*) i_mol
+                neighbor_list(ind) = i_mol
+                ind = ind + 1
+            endif
+        endif
+    enddo
+  write(*,*) ""
+  end subroutine get_hbond_neighbors
+
+  subroutine get_h3o_network( h3o_ind, molecule_data , atom_data, system_data, hop_file )
+    use global_variables
+    integer, intent(in) :: h3o_ind, hop_file
+    type( molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type( system_data_type ), intent(in) :: system_data
+    type( atom_data_type ), intent(in) :: atom_data
+
+    real*8, dimension(3) :: o1_xyz, o0_xyz, shift_o_o, shift_h1_o, dr_o, dr_h1_o, h1_xyz, h0_xyz, dr_h1_o1
+    real*8, dimension(3) :: shift_h0_o1, dr_h0_o1, dr_h0_o0, shift_o_o2, dr_o2
+    real*8               :: h1_o1_mag, o1_o_mag, h0_o0_mag, cosine, theta
+    integer, dimension(:), allocatable :: neighbor_list
+    integer :: num_water, n_mol, i_mol, i_atom, spcfw, h3o_mol_type, num_acceptors, num_donors
+    type(single_molecule_data_type) :: single_molecule_data_water, single_molecule_data_h3o
+
+    h3o_mol_type = molecule_data(h3o_ind)%molecule_type_index
+    n_mol = system_data%n_mole
+    num_water = 0
+    num_acceptors = 0
+    num_donors = 0
+
+!    do i_mol=1, n_mol
+!        if (molecule_data(i_mol)%mname=='spcfw') then
+!          num_water = num_water + 1
+!        endif
+!    enddo
+
+!    allocate( neighbor_list(num_water) )
+
+!    call get_hbond_neighbors( h3o_ind, molecule_data, system_data, neighbor_list )
+
+    call return_molecule_block( single_molecule_data_h3o, molecule_data(h3o_ind)%n_atom, molecule_data(h3o_ind)%atom_index, atom_xyz=atom_data%xyz )
+
+    o1_xyz = single_molecule_data_h3o%xyz(:,1)
+
+    do i_mol=1, n_mol
+     ! if ( neighbor_list(i_mol) < 1 .or. neighbor_list(i_mol) > n_mol ) exit
+      if (molecule_data(i_mol)%mname=='spcfw') then
+   !   spcfw = neighbor_list(i_mol)
+      spcfw = i_mol
+      call return_molecule_block( single_molecule_data_water, molecule_data(spcfw)%n_atom, molecule_data(spcfw)%atom_index, atom_xyz=atom_data%xyz, atom_name=atom_data%aname )
+      o0_xyz = single_molecule_data_water%xyz(:,1)
+
+      shift_o_o = pbc_shift( o1_xyz, o0_xyz, system_data%box, system_data%xyz_to_box_transform )
+      dr_o = pbc_dr( o1_xyz, o0_xyz, shift_o_o )
+      if ( dot_product( dr_o, dr_o ) < 3.6**2 ) then
+            do i_atom=1, molecule_data(h3o_ind)%n_atom
+                if ( molecule_type_data( h3o_mol_type )%evb_reactive_protons(i_atom) == 1) then
+                    h1_xyz = single_molecule_data_h3o%xyz(:,i_atom)
+                    shift_h1_o = pbc_shift( h1_xyz, o0_xyz, system_data%box, system_data%xyz_to_box_transform )
+                    dr_h1_o = pbc_dr( h1_xyz, o0_xyz, shift_h1_o )
+                    if ( dot_product( dr_h1_o, dr_h1_o ) < 2.41**2 ) then
+                        dr_h1_o1 = h1_xyz(:) - o1_xyz(:)
+                        h1_o1_mag = dsqrt( dot_product( dr_h1_o1, dr_h1_o1 ) )
+                        o1_o_mag = dsqrt( dot_product( dr_o, dr_o) )
+                        cosine = dot_product( dr_o , dr_h1_o1 )/ h1_o1_mag / o1_o_mag
+
+                        if ( cosine < -0.999999999d0 ) then
+                        theta = constants%pi
+                        elseif ( cosine > 0.999999999d0 ) then
+                        theta = 0d0
+                        else
+                        theta = acos( cosine )
+                        endif
+                        theta = theta*180/constants%pi
+                        if (theta < 30) then
+                            num_acceptors = num_acceptors + 1
+                        endif
+                    endif
+                endif
+            enddo
+
+            do i_atom=2, molecule_data(spcfw)%n_atom
+               h0_xyz = single_molecule_data_water%xyz(:,i_atom)
+               shift_h0_o1 = pbc_shift( o1_xyz, h0_xyz, system_data%box, system_data%xyz_to_box_transform )
+               dr_h0_o1 = pbc_dr( o1_xyz, h0_xyz, shift_h0_o1 )
+               if ( dot_product( dr_h0_o1, dr_h0_o1 ) < 2.41**2 ) then
+                  dr_h0_o0 = h0_xyz(:) - o0_xyz(:)
+                  shift_o_o2 = pbc_shift( o0_xyz, o1_xyz, system_data%box, system_data%xyz_to_box_transform )
+                  dr_o2 = pbc_dr( o0_xyz, o1_xyz, shift_o_o2 )
+                  h0_o0_mag = dsqrt( dot_product( dr_h0_o0, dr_h0_o0 ) )
+                  o1_o_mag = dsqrt( dot_product( dr_o2, dr_o2) )
+                  cosine = dot_product( dr_o2 , dr_h0_o0 )/ h0_o0_mag / o1_o_mag
+
+                  if ( cosine < -0.999999999d0 ) then
+                  theta = constants%pi
+                  elseif ( cosine > 0.999999999d0 ) then
+                  theta = 0d0
+                  else
+                  theta = acos( cosine )
+                  endif
+                  theta = theta*180/constants%pi
+                  if ( theta < 30 ) then
+                    num_donors = num_donors + 1
+                  endif
+               endif
+            enddo
+
+      endif
+
+      call dissociate_single_molecule_data(single_molecule_data_water)
+    endif
+    enddo
+    call dissociate_single_molecule_data(single_molecule_data_h3o)
+ !   deallocate(neighbor_list)
+
+    Select Case( print_ms_evb_data )
+    Case("yes")
+    write( hop_file, * ) "number of acceptors ", num_acceptors
+    write( hop_file, * ) "number of donors ", num_donors
+    End Select
+
+  end subroutine get_h3o_network
+
+ subroutine write_geometry( A, single_molecule_data_donor, single_molecule_data_acceptor, num_atom_donor, num_atom_acceptor, a_file )
+    real*8, intent(in)  :: A
+    integer, intent(in) :: num_atom_donor, num_atom_acceptor, a_file
+    type(single_molecule_data_type), intent(in) :: single_molecule_data_donor, single_molecule_data_acceptor
+
+    integer :: i_atom
+    character(4) :: ind
+
+    write(a_file,*) "Donor Coordinates"
+    do i_atom=1, num_atom_donor
+        ind = single_molecule_data_donor%aname(i_atom)
+        write(a_file,*) ind(1:), single_molecule_data_donor%xyz(:,i_atom)
+    enddo
+    write(a_file,*) 'Acceptor Coordinates'
+    do i_atom=1, num_atom_acceptor
+        ind = single_molecule_data_acceptor%aname(i_atom)
+        write(a_file,*) ind(1:), single_molecule_data_acceptor%xyz(:,i_atom)
+    enddo
+    write(a_file,*) 'A', A
+    write(a_file,*) ''
+  end subroutine write_geometry
 end module ms_evb

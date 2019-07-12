@@ -24,11 +24,8 @@ contains
     call getarg( 5, file_io_data%ofile_traj )
     call getarg( 6, file_io_data%ofile_log )
     call getarg( 7, file_io_data%ofile_hop )
-    call getarg( 8, file_io_data%ofile_hamiltonian )
-
+    call getarg( 8, file_io_data%ofile_a )
   end subroutine sort_input_files
-
-  
 
   !**********************************************************************
   ! This subroutine checks if we are restarting a trajectory
@@ -883,42 +880,42 @@ contains
 
   end subroutine print_simulation_info
 
-  subroutine print_hamiltonian_info( h_array, ground_state_eigenv, file_io_data )
-    use global_variables
+!  subroutine print_hamiltonian_info( h_array, ground_state_eigenv, file_io_data )
+!    use global_variables
     ! Print Hamiltonian info if close to proton hop. The array is ordered
     ! by descending value first, and then the Hamiltonian is printed.
 
-    real*8, dimension(:,:), intent(in) :: h_array
-    real*8, dimension(:), intent(in) :: ground_state_eigenv
-    type(file_io_data_type),intent(in) :: file_io_data
+!    real*8, dimension(:,:), intent(in) :: h_array
+!    real*8, dimension(:), intent(in) :: ground_state_eigenv
+!    type(file_io_data_type),intent(in) :: file_io_data
 
-    real*8, dimension(:), allocatable :: a
-    real*8, dimension(2) :: n
-    integer :: eigen_size, i, j, a1, h_size
+!    real*8, dimension(:), allocatable :: a
+!    real*8, dimension(2) :: n
+!    integer :: eigen_size, i, j, a1, h_size
     
-    eigen_size = size(ground_state_eigenv)
-    allocate(a(eigen_size))
-    a = ground_state_eigenv
-    call SelectionSort(a) 
+!    eigen_size = size(ground_state_eigenv)
+!    allocate(a(eigen_size))
+!    a = ground_state_eigenv
+!    call SelectionSort(a) 
 
-    n = shape(h_array)
-    h_size = n(1)
-    a1 = size(a)
-    if (a(1) <= 0.74) then
-        if (a(2) >= 0.66) then
-            write(file_io_data%ofile_hamiltonian_file_h,*) "step ", trajectory_step
-            write(file_io_data%ofile_hamiltonian_file_h,*) "c1^2", a(1), "c2^2", a(2)
-            write(file_io_data%ofile_hamiltonian_file_h,*) ""
-            do i=1, h_size
-                do j=i, h_size
-                    write(file_io_data%ofile_hamiltonian_file_h,*) i,j, h_array(i,j)
-                    write(file_io_data%ofile_hamiltonian_file_h,*) ""
-                enddo
-            enddo 
-        endif    
-    endif 
+!    n = shape(h_array)
+!    h_size = n(1)
+!    a1 = size(a)
+!    if (a(1) <= 0.74) then
+!        if (a(2) >= 0.66) then
+!            write(file_io_data%ofile_hamiltonian_file_h,*) "step ", trajectory_step
+!            write(file_io_data%ofile_hamiltonian_file_h,*) "c1^2", a(1), "c2^2", a(2)
+!            write(file_io_data%ofile_hamiltonian_file_h,*) ""
+!            do i=1, h_size
+!                do j=i, h_size
+!                    write(file_io_data%ofile_hamiltonian_file_h,*) i,j, h_array(i,j)
+!                    write(file_io_data%ofile_hamiltonian_file_h,*) ""
+!                enddo
+!            enddo 
+!        endif    
+!    endif 
 
-  end subroutine print_hamiltonian_info
+ ! end subroutine print_hamiltonian_info
 
   !**************************************************************************
   ! This subroutine print trajectory and energy info of step to trajectory file and log file
@@ -1004,9 +1001,51 @@ contains
 
   end subroutine print_gro_file
 
+  !*******************************************
+  ! this subroutine print grofile format output
+  !*******************************************
+  subroutine print_forces( force_h, i_step , system_data , molecule_data , atom_data, integrator_data )
+    use global_variables
+    integer, intent(in) :: force_h, i_step
+    type(system_data_type), intent(in)   :: system_data
+    type(molecule_data_type), dimension(:), intent(in) :: molecule_data
+    type(atom_data_type) , intent(in)    :: atom_data
+    type(integrator_data_type) , intent(in) :: integrator_data
 
+    !******** this is a local data structure with pointers that will be set
+    ! to subarrays of atom_data arrays for the specific atoms in the molecule
+    type(single_molecule_data_type) :: single_molecule_data
 
+    real*8  :: force(3), box(3,3)
+    integer :: i_mole, i_atom, i_count
+    real*8  :: time_step
 
+    time_step = i_step * integrator_data%delta_t
+
+    write( force_h, *) "step ", i_step, "time(ps)", time_step
+    write( force_h, *) system_data%total_atoms
+
+    i_count=1
+    do i_mole =1 , system_data%n_mole
+
+       ! set pointers for this data structure to target molecule
+       call return_molecule_block( single_molecule_data , molecule_data(i_mole)%n_atom, molecule_data(i_mole)%atom_index, atom_force=atom_data%force, atom_name=atom_data%aname )
+
+       do i_atom=1, molecule_data(i_mole)%n_atom
+           ! print in nanometers for gro file
+           force(:) = single_molecule_data%force(:,i_atom)
+           write( force_h, '(I5,2A5,I5,3F9.3)' ) i_mole , molecule_data(i_mole)%mname , single_molecule_data%aname(i_atom), i_count, force
+           i_count = i_count + 1
+       enddo
+
+    enddo
+
+  call dissociate_single_molecule_data(single_molecule_data)
+
+  box = system_data%box / 10d0
+  write( force_h, '(9F7.4)' ) box(1,1) , box(2,2) , box(3,3) , box(1,2) , box(1,3) , box(2,1) , box(2,3) , box(3,1) , box(3,2)
+
+  end subroutine print_forces
 
   !*******************************************
   ! this subroutine prints atomic velocities to a velocity checkpoint file
@@ -1042,8 +1081,6 @@ contains
   call dissociate_single_molecule_data(single_molecule_data)
 
   end subroutine print_velocities_checkpoint
-
-
 
   !**************************************************************
   ! This subroutine checks to make sure that molecules are not broken up
@@ -1272,12 +1309,13 @@ contains
     ! found in global_variables
     size_verlet = floor( dble(size_verlet) *  verlet_list_data%safe_verlet )
 
-    allocate( verlet_list_data%neighbor_list(size_verlet) )
-
-
+    Select Case( verlet_allpairs )
+    Case("yes")
+      allocate( verlet_list_data%neighbor_list(floor(total_atoms**2/2d0)) )
+    Case Default
+      allocate( verlet_list_data%neighbor_list(size_verlet) )
+    End Select
   end subroutine allocate_verlet_list
-
-
 
   !**********************************************
   ! this subroutine keeps track of atomic displacements since the
@@ -1369,7 +1407,60 @@ contains
 
   end subroutine update_verlet_displacements
 
+  subroutine construct_verlet_list( verlet_list_data, atom_data, molecule_data, total_atoms, box, xyz_to_box_transform )
+    use global_variables
+    type(verlet_list_data_type), intent(inout) :: verlet_list_data
+    type(atom_data_type), intent(in)           :: atom_data
+    type(molecule_data_type),dimension(:), intent(in) :: molecule_data
+    integer,intent(in)          :: total_atoms
+    real*8,dimension(:,:),intent(in) :: box, xyz_to_box_transform
 
+    Select Case( verlet_allpairs)
+    Case("yes")
+      call construct_verlet_list_allpairs(verlet_list_data, molecule_data, total_atoms)
+    Case Default
+      call construct_verlet_list_grid(verlet_list_data, atom_data, molecule_data, total_atoms, box, xyz_to_box_transform)
+    End Select
+
+  end subroutine construct_verlet_list
+
+  subroutine construct_verlet_list_allpairs( verlet_list_data, molecule_data, total_atoms )
+    use global_variables
+    type(verlet_list_data_type), intent(inout) :: verlet_list_data
+    type(molecule_data_type),dimension(:), intent(in) :: molecule_data
+    integer,intent(in)          :: total_atoms
+
+    integer :: n_mole, i_mole, j_mole, i_atom, j_atom, a_index, verlet_index
+    integer, dimension(:), allocatable  :: index_molecule
+
+    allocate( index_molecule(total_atoms) )
+
+    n_mole = size(molecule_data)
+
+    do i_mole=1, n_mole
+       do i_atom=1, molecule_data(i_mole)%n_atom
+            a_index = molecule_data(i_mole)%atom_index(i_atom)
+            index_molecule(a_index) = i_mole
+       enddo
+    enddo
+
+    verlet_index = 1
+    do i_atom=1, total_atoms
+       verlet_list_data%verlet_point(i_atom) = verlet_index
+       do j_atom=i_atom, total_atoms
+          i_mole = index_molecule(i_atom)
+          j_mole = index_molecule(j_atom)
+           if (i_mole /= j_mole) then
+              verlet_list_data%neighbor_list( verlet_index ) = j_atom
+              verlet_index = verlet_index + 1
+           endif
+       enddo
+    enddo
+    verlet_list_data%verlet_point(total_atoms+1) = verlet_index
+
+    deallocate( index_molecule )
+
+  end subroutine construct_verlet_list_allpairs
 
 
   !**********************************************
@@ -1386,7 +1477,7 @@ contains
   ! note that this means we need to set the value of verlet_point(last_atom+1), so that we know the finish position for
   ! neighbors of last_atom
   !*********************************************
-  subroutine construct_verlet_list(verlet_list_data, atom_data, molecule_data, total_atoms, box, xyz_to_box_transform) 
+  subroutine construct_verlet_list_grid(verlet_list_data, atom_data, molecule_data, total_atoms, box, xyz_to_box_transform) 
     use global_variables
     type(verlet_list_data_type), intent(inout) :: verlet_list_data
     type(atom_data_type), intent(in)           :: atom_data
@@ -1567,7 +1658,6 @@ contains
 
     deallocate( nslist_cell, cell_index_hash, index_molecule, headlist_cell, endlist_cell )
 
-
     !****************************timing**************************************!
     if(debug .eq. 1) then
        call date_and_time(date,time)
@@ -1575,12 +1665,7 @@ contains
     endif
     !***********************************************************************!
 
-
-  end subroutine construct_verlet_list
-
-
-
-
+  end subroutine construct_verlet_list_grid
 
   !***********************************
   ! this subroutine makes sure that the interaction cutoff

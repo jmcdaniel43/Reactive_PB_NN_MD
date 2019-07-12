@@ -34,7 +34,7 @@ contains
     character(10) :: param_string
     character(30) :: param_name,line
     real*8 :: param_number
-    integer:: flag_ensemble=0, flag_n_step=0, flag_n_output=0, flag_temperature=0, flag_n_exclusions=0
+    integer:: flag_ensemble=0, flag_n_step=0, flag_n_output=0, flag_temperature=0, flag_n_exclusions=0, flag_initial_temp=0
     integer:: flag_delta_t=0, flag_real_space_cutoff=0, flag_n_threads=0, flag_lj_comb_rule=0
     integer:: flag_na_nslist=0, flag_nb_nslist=0, flag_nc_nslist=0, flag_verlet_cutoff=0, flag_debug=0, flag_grid_Tang_Toennies=0, flag_alpha_sqrt=0, flag_pme_grid=0, flag_spline_order=0, flag_checkpoint_velocity=0
     integer:: flag_pressure=0, flag_barofreq=0, flag_baroscale=0, flag_friction_coeff=0
@@ -60,7 +60,6 @@ contains
        Select Case (param_name)
        Case("ensemble")
           integrator_data%ensemble = param_string
-          print *, param_string
           flag_ensemble=1
        Case("lj_comb_rule")
           lj_comb_rule = param_string
@@ -94,6 +93,9 @@ contains
        Case("temperature")
           system_data%temperature = param_number
           flag_temperature=1
+       Case("initial_temp")
+          system_data%initial_temp = param_number
+          flag_initial_temp=1
        Case("friction_coeff")
           integrator_data%friction_coeff = param_number
           flag_friction_coeff = 1
@@ -151,6 +153,9 @@ contains
 
     ! ********************************************* REQUIRED VARIABLES have no default values *******************************************
     ! Simulation_Methodology section
+    if( flag_ensemble .eq. 0 ) then
+      stop "Select an ensemble in the simulation parameters file by writing 'ensemble' followed by either NVE, NVT or NPT"
+    endif
     if( flag_n_step .eq. 0 ) then
        stop "variable n_step has not been given a value under the Simulation Parameters section in simulation parameter input file"
     endif
@@ -184,11 +189,9 @@ contains
     ! ******************************************* DEFAULT VALUES for some variables ****************************************************
     ! if these variables are not present in the simulation parameters input file, we try to set to standard settings
     ! note, these default settings will still be subject to consistency checks against the required variables further down
-
-    if( flag_ensemble .eq. 0 ) then
-       integrator_data%ensemble = 'NVT'
+    if( flag_initial_temp .eq. 0) then
+      system_data%initial_temp = system_data%temperature
     endif
-
     if( flag_barofreq .eq. 0 ) then
        system_data%barofreq = 25
     endif

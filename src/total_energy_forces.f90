@@ -34,6 +34,7 @@ contains
 
           ! the "1" input to update_verlet_displacements signals to initialize the displacement array
           call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data , system_data%box, system_data%xyz_to_box_transform , flag_junk, 1 )
+       verlet_list_data%flag_verlet_list = 0
        Case Default
            call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data, system_data%box, system_data%xyz_to_box_transform, verlet_list_data%flag_verlet_list )     
        End Select
