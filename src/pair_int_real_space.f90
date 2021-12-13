@@ -52,8 +52,6 @@ contains
     end subroutine deallocate_pairwise_neighbor_data
 
 
-
-
   !***********************************************************************
   ! This calculates real-space, pairwise contributions to force and energy,
   ! including non-bonded VDWs interactions and real-space portion of 
@@ -63,7 +61,7 @@ contains
     use global_variables
     use MKL_DFTI
     use routines
-!    use omp_lib
+    use omp_lib
     implicit none
 
     Type(system_data_type),intent(inout)             :: system_data
@@ -124,8 +122,6 @@ contains
   end subroutine  real_space_energy_force
 
 
-
-
   !***********************************************
   ! this subroutine calculates the real space part of 
   ! the pme energy using an atom-atom based verlet list
@@ -139,7 +135,7 @@ contains
   subroutine pairwise_real_space_verlet( system_data , atom_data , verlet_list_data , PME_data  )
     use global_variables
     use routines
-!    use omp_lib
+    use omp_lib
     implicit none
     type(system_data_type), intent(inout) :: system_data
     type(atom_data_type), intent(inout)   :: atom_data
@@ -148,7 +144,7 @@ contains
 
     !****** note the storage dimensions of these arrays, consistent with atom_data%force
     real*8, dimension(3,size(atom_data%force(1,:))) :: local_force
-!    real*8, dimension(3,size(atom_data%force(1,:)),n_threads) :: temp_force
+    real*8, dimension(3,size(atom_data%force(1,:)),n_threads) :: temp_force
 
     Type(pairwise_neighbor_data_type) :: pairwise_neighbor_data_verlet , pairwise_neighbor_data_cutoff_lj, pairwise_neighbor_data_cutoff_sapt, pairwise_neighbor_data_cutoff
 
@@ -163,7 +159,7 @@ contains
     E_elec=0d0
     E_vdw =0d0
     local_force = 0.D0
-!    temp_force= 0.D0
+    temp_force= 0.D0
     ! real_space_cutoff is a global variable
     real_space_cutoff2 = real_space_cutoff ** 2
 
@@ -183,12 +179,13 @@ contains
 
 
     !**************************************** use Verlet list ****************************************************************
-!    call OMP_SET_NUM_THREADS(n_threads)
-!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, atype_vdw_type, size_vdw_parameter, verlet_list_data, PME_data%erfc_table, PME_data%ewaldscale_table, PME_data%erfc_dx, Tang_Toennies_table, dTang_Toennies_table) REDUCTION(+:E_elec,E_vdw)
-!    !$OMP CRITICAL
+     call OMP_SET_NUM_THREADS(n_threads)
+     !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, atype_vdw_type, size_vdw_parameter, verlet_list_data, PME_data%erfc_table, PME_data%ewaldscale_table, PME_data%erfc_dx, Tang_Toennies_table, dTang_Toennies_table) REDUCTION(+:E_elec,E_vdw)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(atom_data, total_atoms, box, temp_force, real_space_cutoff2, split_do , xyz_to_box_transform, atype_vdw_parameter, atype_vdw_type, size_vdw_parameter, verlet_list_data, PME_data, Tang_Toennies_table, dTang_Toennies_table) REDUCTION(+:E_elec,E_vdw)
+    !$OMP CRITICAL
     local_force = 0.D0
-!    !$OMP END CRITICAL
-!    !$OMP DO SCHEDULE(DYNAMIC,split_do)
+    !$OMP END CRITICAL
+    !$OMP DO SCHEDULE(DYNAMIC,split_do)
     ! note that in Verlet list, neighbors are only stored if j_atom > i_atom , for efficiency and to avoid double counting
     do i_atom=1 , total_atoms
        xyz_i_atom(:) = atom_data%xyz(:,i_atom)
@@ -270,19 +267,19 @@ contains
           ! now calculate pairwise forces and energies for this atom and its neighbors         
           ! all of these subroutines should vectorize...
           if ( n_cutoff > 0 ) then
-!             !DIR$ FORCEINLINE
+             !DIR$ FORCEINLINE
              call pairwise_real_space_ewald( E_elec_local , pairwise_neighbor_data_cutoff%f_ij ,  pairwise_neighbor_data_cutoff%dr,  pairwise_neighbor_data_cutoff%dr2,  pairwise_neighbor_data_cutoff%qi_qj, PME_data%erfc_table , PME_data%ewaldscale_table, PME_data%erfc_dx )  
           else
              E_elec_local = 0d0
           endif
           if ( n_cutoff_lj > 0 ) then
-!             !DIR$ FORCEINLINE
+             !DIR$ FORCEINLINE
              call pairwise_real_space_LJ( E_vdw_local_lj , pairwise_neighbor_data_cutoff_lj%f_ij ,  pairwise_neighbor_data_cutoff_lj%dr, pairwise_neighbor_data_cutoff_lj%dr2 ,  pairwise_neighbor_data_cutoff_lj%atype_vdw_parameter )
           else
              E_vdw_local_lj = 0d0
           end if
           if ( n_cutoff_sapt > 0 ) then
-!             !DIR$ FORCEINLINE
+             !DIR$ FORCEINLINE
              call pairwise_real_space_sapt( E_vdw_local_sapt, pairwise_neighbor_data_cutoff_sapt%f_ij, pairwise_neighbor_data_cutoff_sapt%dr,pairwise_neighbor_data_cutoff_sapt%dr2, pairwise_neighbor_data_cutoff_sapt%atype_vdw_parameter, Tang_Toennies_table, dTang_Toennies_table, Tang_Toennies_max, Tang_Toennies_grid )
           else
              E_vdw_local_sapt = 0d0
@@ -318,24 +315,21 @@ contains
     end do
     
 
-!    !$OMP END DO NOWAIT
-!    thread_id = OMP_GET_THREAD_NUM()
-!    temp_force(:,:,thread_id+1)= local_force(:,:)
-!    !$OMP END PARALLEL
+    !$OMP END DO NOWAIT
+    thread_id = OMP_GET_THREAD_NUM()
+    temp_force(:,:,thread_id+1)= local_force(:,:)
+    !$OMP END PARALLEL
 
-    atom_data%force = atom_data%force + local_force
+    !atom_data%force = atom_data%force + local_force
 
-!    do i_thread=1,n_threads
-!       atom_data%force = atom_data%force + temp_force(:,:,i_thread)
-!    enddo
-
+    do i_thread=1,n_threads
+       atom_data%force = atom_data%force + temp_force(:,:,i_thread)
+    enddo
 
     system_data%E_elec = system_data%E_elec + E_elec
     system_data%E_vdw = system_data%E_vdw + E_vdw
     
     contains
-
-
 
     !***** this subroutine gathers neighbor data from global atom_data array using the Verlet neighbor list
     subroutine gather_neighbor_data( i_atom, verlet_start , verlet_finish , neighbor_list, pairwise_neighbor_data, xyz, charge, atom_type_index, atype_vdw_parameter, atype_vdw_type )
@@ -374,10 +368,7 @@ contains
 
     end subroutine gather_neighbor_data
 
-   
-
   end subroutine pairwise_real_space_verlet
-
 
   !*******************************************
   ! this subroutine computes intra-molecular
@@ -418,7 +409,6 @@ contains
     ! this is (maximum) number of parameters that we need for VDWs interaction
     size_vdw_parameter=size(atype_vdw_parameter(1,1,:))
     
-
     ! by convention, molecules are not broken up over pbc, so we don't need to
     ! consider shift or minimum image for these intra-molecular interactions
 
@@ -458,7 +448,6 @@ contains
            call allocate_pairwise_neighbor_data( pairwise_neighbor_data_nonexcluded_lj, n_nonexcluded_lj, size_vdw_parameter )
            call allocate_pairwise_neighbor_data(  pairwise_neighbor_data_nonexcluded_sapt, n_nonexcluded_sapt, size_vdw_parameter )
        endif
-
 
        ! now loop over atoms and fill in data structures
        index_excluded=1
@@ -520,7 +509,6 @@ contains
            call intra_pme_exclusion( E_elec_local , pairwise_neighbor_data_excluded%f_ij ,  pairwise_neighbor_data_excluded%dr, pairwise_neighbor_data_excluded%dr2, pairwise_neighbor_data_excluded%qi_qj, erf_factor , alpha_sqrt , constants%conv_e2A_kJmol )
            E_elec = E_elec + E_elec_local
        endif
-       
 
        if ( n_nonexcluded > 0 ) then    
            ! apply cutoff to non-excluded electrostatic interactions.  This is important as the erfc_table, and ewaldscale_table tables are only tabulated up to the cutoff
@@ -586,7 +574,6 @@ contains
            force_local(:,j_atom) = force_local(:,j_atom) - pairwise_neighbor_data_nonexcluded_sapt%f_ij(:,i_index)
        enddo
        
-
        ! deallocate data structures
        if ( n_nonexcluded > 0 ) then
           call deallocate_pairwise_neighbor_data(pairwise_neighbor_data_cutoff)
@@ -599,8 +586,6 @@ contains
 
     enddo
   end subroutine intra_molecular_pairwise_energy_force
-
-
 
     !*********** this subroutine uses the cutoff_mask to reorganize data
     !structures and only keep the neighbor atoms within the cutoff distance
@@ -659,8 +644,6 @@ contains
 
   end subroutine pairwise_real_space_LJ
 
-
-
   !****************************************
   !this subroutine uses the modified Buckingham potential
   !from the SAPT force fields
@@ -675,11 +658,9 @@ contains
     real*8, intent(in) :: Tang_Toennies_max
     integer, intent(in) :: Tang_Toennies_grid
     
-    
     real*8, dimension(size(dr2)) :: dr6, dr12, dr1, dr10, dr8
     real*8, dimension(4,size(dr2)) :: tt_table, dtt_table
     integer :: i_atom, i_index
-
      
      ! $omp simd
      dr1 = sqrt(dr2)
@@ -833,9 +814,5 @@ dr1(i_atom) * dtt_table(4,i_atom) * lj_parameters(6,i_atom)/dr12(i_atom) - tt_ta
 
 
   end subroutine intra_pme_exclusion
-
-
-
-
 
 end module pair_int_real_space

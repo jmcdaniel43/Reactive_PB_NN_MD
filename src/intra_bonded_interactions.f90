@@ -16,7 +16,7 @@ contains
   !******************************************
   subroutine intra_molecular_energy_force( system_data, molecule_data, atom_data )
     use global_variables
-!    use omp_lib
+    use omp_lib
     type(system_data_type) , intent(inout)  :: system_data
     type(molecule_data_type), dimension(:), intent(in) :: molecule_data
     type(atom_data_type) , intent(inout) :: atom_data
@@ -35,9 +35,9 @@ contains
     ! note that not all molecules have dihedrals, and those that do are probably
     ! in continuous indices, so don't split loop into big chunks here
 
-!    !    call OMP_SET_NUM_THREADS(n_threads)
-!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:E_bond, E_angle, E_dihedral)
-!    !$OMP DO SCHEDULE(DYNAMIC,1)
+    !    call OMP_SET_NUM_THREADS(n_threads)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads, atom_data, molecule_data, system_data ) REDUCTION(+:E_bond, E_angle, E_dihedral)
+    !$OMP DO SCHEDULE(DYNAMIC,1)
     do i_mole = 1, system_data%n_mole
 
        ! this is used to look up bonded force field parameters for this molecule
@@ -62,8 +62,8 @@ contains
        call dissociate_single_molecule_data(single_molecule_data)
 
     enddo
-!    !$OMP END DO NOWAIT
-!    !$OMP END PARALLEL
+    !$OMP END DO NOWAIT
+    !$OMP END PARALLEL
 
     system_data%E_bond = E_bond
     system_data%E_angle = E_angle
@@ -551,8 +551,6 @@ contains
 
   end subroutine quartet_dihedral_energy_force
 
-
-
   !*****************************************
   ! This subroutine generates an exclusions list
   ! "pair_exclusions" for every molecule type
@@ -618,8 +616,6 @@ contains
 
   end subroutine generate_intramolecular_exclusions
 
-
-
   !******************************************
   ! this subroutine finds bonded neighbors of j_atom, and if those neighbors
   ! are n_bonds away from i_atom, then an exclusion is generated between that
@@ -663,8 +659,6 @@ contains
 
   end subroutine search_bonds_recursive
 
-
-
   !**********************************
   ! this function returns 0 if integer
   ! index is not present in the first
@@ -683,8 +677,6 @@ contains
     end do
 
   end function check_list
-
-
 
   !******************************************
   !  This subroutine reads a topology file that
@@ -780,9 +772,6 @@ contains
 
   end subroutine read_topology_file
 
-
-
-
   !***************************************
   ! This subroutine reads the bondtypes section
   ! of a topology file
@@ -874,9 +863,6 @@ contains
 
   end subroutine read_topology_bondtypes
 
-
-
-
   !***************************************
   ! This subroutine reads the angletypes section
   ! of a topology file
@@ -951,8 +937,6 @@ contains
     end do
 
   end subroutine read_topology_angletypes
-
-
 
   !***************************************
   ! This subroutine reads the dihedraltypes section
@@ -1068,10 +1052,6 @@ contains
 
 
   end subroutine read_topology_dihedraltypes
-
-
-
-
 
   !*********************************
   ! this subroutine reads the topology information

@@ -265,8 +265,6 @@ contains
           stop "variable lj_comb_rule has not been given a value.  For lj force field, Set to either 'opls' for opls combination rule, or 'standard' for Lorentz-Berthelot combination rule"
     endif
 
-
-
     ! using grid based construction of verlet list, make sure we've read in grid size
     if ( ( flag_na_nslist == 0 ) .or. ( flag_nb_nslist == 0 ) .or. ( flag_nc_nslist == 0 ) ) then
        write(*,*) "must input grid size settings, na_nslist, nb_nslist, nc_nslist, if"

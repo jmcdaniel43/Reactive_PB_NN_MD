@@ -12,10 +12,10 @@ COMPILER=mpiifort
 MKLLIB="-L${MKLROOT}/lib/intel64"
 MKLINC="-I./mkl_modules"
 #FFLAGS="-O3 -qopenmp -mkl=sequential $MKLLIB -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -ldl $MKLINC"
-#FFLAGS="-O1 -qopenmp -check all -traceback -debug all -mkl=sequential $MKLLIB -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -ldl $MKLINC"
+FFLAGS="-O1 -qopenmp -check all -traceback -debug all -mkl=sequential $MKLLIB -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -ldl $MKLINC"
 
 # use this set of flags for profiling function timings.  Need to not link with openmp, since profiler only works on serial code...
-FFLAGS="-O3 -profile-functions -mkl=sequential $MKLLIB -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -ldl $MKLINC"
+#FFLAGS="-O3 -profile-functions -mkl=sequential $MKLLIB -lmkl_intel_lp64 -lmkl_intel_thread -lmkl_core -liomp5 -lpthread -ldl $MKLINC"
 
 echo MKLROOT: $MKLROOT
 echo MKLLIB: $MKLLIB

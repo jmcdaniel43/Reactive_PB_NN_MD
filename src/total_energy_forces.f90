@@ -9,7 +9,6 @@ module total_energy_forces
   use bonded_interactions
   use routines
 
-
 contains
 
   !***********************************************************
@@ -49,7 +48,6 @@ contains
     system_data%E_angle= 0d0
     system_data%E_dihedral=0d0
 
-
     !***************************** real-space interactions *************************
     !***  This covers the real-space part of PME, and
     !*** all intra and intermolecular pairwise VDWs interactions.  This will
@@ -58,7 +56,6 @@ contains
     call real_space_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data )
 
     !****************************  reciprocal-space interactions    *****************
-
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -99,12 +96,7 @@ contains
     ! total potential energy of system
     system_data%potential_energy = system_data%E_elec + system_data%E_vdw + system_data%E_bond + system_data%E_angle + system_data%E_dihedral
 
-
   end subroutine calculate_total_force_energy
-
-
-
-
 
   !**************************************
   ! this subroutine calculates the total kinetic energy
@@ -127,8 +119,5 @@ contains
     end do
 
   end subroutine calculate_kinetic_energy
-
-
-
 
 end module total_energy_forces

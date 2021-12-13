@@ -49,7 +49,6 @@ contains
     Inquire( file=file_io_data%ofile_log , exist=ofile_log_exist  )    
     Inquire( file=file_io_data%ifile_velocity, exist=velocity_file_exist )
 
-
     if ( ofile_traj_exist .and. ofile_log_exist .and. velocity_file_exist ) then
 
        ! local variables
@@ -82,7 +81,6 @@ contains
           read(vel_file,*) junk, i_step_vel
        enddo
 
-
        !************** now make sure the last steps in the trajectory and velocity files are the same
        if ( ( i_step_vel == i_step_traj ) .and. ( i_step_vel > 0 ) ) then
           restart_trajectory="yes"
@@ -114,11 +112,7 @@ contains
        n_old_trajectory=0
     endif
 
-
   end subroutine check_restart_trajectory
-
-  
-
 
   !**********************************************************************
   ! this subroutine scans to the end of a .gro trajectory to restart a simulation
@@ -146,9 +140,6 @@ contains
        backspace(traj_file)
 
   end subroutine scan_grofile_restart
-
-
-
 
   !**********************************************************************
   ! this subroutine reads velocities from the velocity checkpoint file to restart a simulation
@@ -186,8 +177,6 @@ contains
 
   end subroutine read_velocity_restart_checkpoint
 
-
-
   !***********************************************************************
   ! this subroutine figures out the number of molecules in gro file to allocate
   ! molecule arrays
@@ -218,9 +207,6 @@ contains
   close( file_handle )
 
   end subroutine read_gro_number_molecules
-
-
-
 
   !***********************************************************************
   ! this subroutine reads a .gro file and stores the atomic names and coordinates
@@ -288,7 +274,6 @@ contains
    call trim_end( mname )
    molecule_data(i_mole)%mname = mname
 
-
    ! now get box.  Initialize to zero in case orthorhombic..
    box=0d0
 
@@ -327,10 +312,7 @@ contains
 
 !  close( file_handle )
 
-
   end subroutine read_gro
-
-
 
   !******************************
   ! this subroutine returns the next non-comment
@@ -377,8 +359,6 @@ contains
 
   end subroutine read_topology_line
 
-
-
   !*************************************
   ! This subroutine reads a file until specified heading is found
   ! if heading is found, flag_found is set to "1", else it is "0"
@@ -412,9 +392,6 @@ contains
 
   end subroutine read_file_find_heading
 
-
-
-
   !********************************************************
   ! This function find the center of mass of a molecule
   !********************************************************
@@ -436,7 +413,6 @@ contains
     pos_com(:) = pos_com(:) / m_tot
 
   end function pos_com
-
 
   !*********************************************************
   ! This function update all COM positions
@@ -463,8 +439,6 @@ contains
   call dissociate_single_molecule_data(single_molecule_data)
   end subroutine update_r_com
 
-
-
   !**************************************************
   ! this subroutine creates the transformation matrix
   ! from cartesian to box coordinates
@@ -485,13 +459,11 @@ contains
           temp_xyz(i,j) = box(j,i)
        enddo
     enddo
-
     call gaussj(temp_xyz, junk)
 
     xyz_to_box_transform = temp_xyz
 
   end subroutine initialize_non_orth_transform
-
 
   !******************************************
   ! reciprocal lattice vector.  This is essentially the same
@@ -516,8 +488,6 @@ contains
     kk(1,:)=ka(:);kk(2,:)=kb(:);kk(3,:)=kc(:)
 
   end subroutine construct_reciprocal_lattice_vector
-
-
 
   !********************************************
   ! this subroutine creates direct coordinates, scaled
@@ -553,10 +523,6 @@ contains
 
   end subroutine create_scaled_direct_coordinates
 
-
-
-
-
   !***************************************************************************
   ! This function calculate shift vector for PBC
   ! for a general treatment of non-orthogonal boxes
@@ -591,8 +557,6 @@ contains
 
   end function pbc_shift
 
-
-
   !******************************************************************
   ! This function calculate dr between two atoms, 
   ! @ith shift vector calcuated by pbc_shift
@@ -602,8 +566,6 @@ contains
     real*8, intent(in), dimension(3) :: shift, ri, rj
     pbc_dr(:) = rj(:) - ri(:) - shift(:)
   end function pbc_dr
-
-
 
   !***********************************
   ! this subroutine is used to find the index
@@ -639,9 +601,6 @@ contains
 
   end subroutine find_bonded_atom_hydrogen
 
-
-
-
   !*****************************************
   ! this subroutine is used to find the index corresponding
   ! to a set of atom types.  For example, this is used
@@ -676,9 +635,6 @@ contains
     enddo
 
   end subroutine get_index_atom_set
-
-
-
 
   !*********************************
   ! this function returns single_molecule_data_type structure
@@ -746,10 +702,7 @@ contains
        single_molecule_data%aname=>atom_name(low_index:high_index)
     endif
 
-
   end subroutine return_molecule_block
-
-
 
   subroutine dissociate_single_molecule_data(single_molecule_data)
     use global_variables
@@ -764,10 +717,7 @@ contains
     nullify( single_molecule_data%atom_type_index )
     nullify( single_molecule_data%aname )
 
-
   end subroutine dissociate_single_molecule_data
-
-
 
   !************************************************************************
   ! this subroutine seeds the fortran random number generator based on the system clock
@@ -785,7 +735,6 @@ contains
     call random_seed(put = seed )
 
   end subroutine initialize_random_seed
-
 
   !*************************************************************************
   ! This subroutine moves all spaces at the beginning of a string to the end
@@ -812,7 +761,6 @@ contains
     end do
   end subroutine trim_head
 
-
   !*************************************************************************
   ! This subroutine moves all spaces at the beginning of a string to the end
   !*************************************************************************
@@ -837,7 +785,6 @@ contains
        aname(i:i) = ' '
     end do
   end subroutine trim_end
-
 
   !*************************************************************************
   ! this subroutine prints information about the simulation
@@ -942,7 +889,6 @@ contains
        write( log_file, * ), "volume", system_data%volume, "density", system_data%n_mole / system_data%volume
    end select
 
-
     Select Case(ms_evb_simulation)
     Case("yes")
        write( log_file, * )  '------------------------------'
@@ -953,9 +899,6 @@ contains
     end Select
 
   end subroutine print_step
-
-
-
 
   !*******************************************
   ! this subroutine print grofile format output
@@ -1103,7 +1046,6 @@ contains
 
     ! loop over molecules
     do i_mole = 1 , n_mole
-
        ! set pointers for this data structure to target molecule
        ! we will be just using xyz coordinates here
        ! note we are changing global atom_data%xyz data structure with pointer !
@@ -1115,9 +1057,6 @@ contains
   call dissociate_single_molecule_data(single_molecule_data)
 
   end subroutine fix_intra_molecular_shifts
-
-
-  
 
   !******************** 
   ! this subroutine removes any pbc shifts for atoms within a molecule
@@ -1145,10 +1084,6 @@ contains
        endif
 
   end subroutine make_molecule_whole
-
-
-
-
 
   !***************************************************************
   ! This subroutine checks that cutoffs are set appropriately for minimum image
@@ -1202,9 +1137,6 @@ contains
        endif
 
   end subroutine check_cutoffs_box
-
-
-
 
   !*****************************************************
   ! this subroutine translates molecules back into box if it
@@ -1263,9 +1195,6 @@ contains
   call dissociate_single_molecule_data(single_molecule_data)
 
   end subroutine shift_molecules_into_box
-
-
-
 
   !*********************************************
   ! this subroutine allocates the size of the verlet list
@@ -1462,7 +1391,6 @@ contains
 
   end subroutine construct_verlet_list_allpairs
 
-
   !**********************************************
   ! this subroutine constructs the verlet neighbor list using a cell list
   ! 
@@ -1579,7 +1507,6 @@ contains
     ! otherwise code below can loop over the same cell twice if dia = 1/2 na_nslist,
     ! and this will cause a bug. 
     call check_neighbor_list_grid_cutoff_consistency( dia, dib , dic , verlet_list_data%na_nslist, verlet_list_data%nb_nslist , verlet_list_data%nc_nslist, rka, rkb, rkc )
-
 
     ! now form verlet neighbor list using this cell list
     do i_mole =1,n_mole
@@ -1706,11 +1633,6 @@ contains
 
   end subroutine check_neighbor_list_grid_cutoff_consistency
 
-
-
-
-
-
   !*************************************
   ! this subroutine acts like a hash, by
   ! writing to a string, and then reading
@@ -1746,9 +1668,6 @@ contains
 
   end subroutine cell_index_hash_io
 
-
-
-
   !*******************************
   ! this subroutine acts like a hash for
   ! the global variable atype_name array.
@@ -1779,7 +1698,6 @@ contains
     end if
 
   end subroutine atype_name_reverse_lookup
-
 
   !*******************************
   ! this subroutine acts like a hash for
@@ -1814,10 +1732,6 @@ contains
 
   end subroutine mtype_name_reverse_lookup
 
-
-
-
-
   !****************************************
   ! initializes factorial array for damping functions
   !****************************************
@@ -1829,9 +1743,6 @@ contains
        factorial(i) = dble(i) * factorial(i-1)
     enddo
   end subroutine initialize_factorial
-
-
-
 
   !********************************************************
   ! this function calls the Tang-Toennies damping function for R6,R8,R10,R12 dispersion interaction
@@ -1865,7 +1776,6 @@ contains
 
   end function C6_C10_damp
 
-
   !******************************************
   ! This returns the Tang_Toennies damping function of order n for argument x
   !******************************************
@@ -1890,7 +1800,6 @@ contains
 
   end function Tang_Toennies_damp
 
-
   !******************************************
   ! This returns the derivative w.r.t x of Tang_Toennies damping function of order n for argument x
   !******************************************
@@ -1905,7 +1814,6 @@ contains
 
   end function dTang_Toennies_damp
 
-
   !********************************************************
   ! this function is the gradient of the Tang-Toennies damping function for R6,R8,R10,R12 dispersion interaction
   !********************************************************
@@ -1918,8 +1826,6 @@ contains
     grad_C6_C10_damp = dC6_C10_damp(atom_id1,atom_id2,norm_dr,n) * r_vec / norm_dr 
 
   end function grad_C6_C10_damp
-
-
 
   !********************************************************
   ! this function returns the first order derivative of the 
@@ -1959,10 +1865,6 @@ contains
     End Select
 
   end function dC6_C10_damp
-
-
-
-
 
   !********************************
   ! this subroutines generates velocity from
@@ -2008,8 +1910,6 @@ contains
 
   end subroutine max_boltz
 
-
-
   !***************************
   ! this computes the determinant of a 3x3 matrix
   !***************************
@@ -2023,7 +1923,6 @@ contains
     determinant_3 = a(1,1) * (a(2,2) * a(3,3) - a(3,2) * a(2,3) ) - a(1,2) * (a(2,1) * a(3,3) - a(2,3)*a(3,1) ) + a(1,3) * (a(2,1) * a(3,2) - a(3,1) * a(2,2) )
 
   end function determinant_3
-
 
   subroutine crossproduct( a,b,ans )
     implicit none
@@ -2047,8 +1946,6 @@ contains
     volume = abs(volume)
   end function volume
 
-
-
   !***************************************************
   ! this gauss-jordan rotation subroutine is copied from numerical recipes
   ! with a few changes made as to variable type definitions
@@ -2071,7 +1968,7 @@ contains
     else
        stop "check array sizes in gaussj subroutine"
     endif
-
+    
     irow => irc(1)
     icol => irc(2)
     ipiv=0
@@ -2109,8 +2006,6 @@ contains
     end do
   END SUBROUTINE gaussj
 
-
-
   !***************************************************
   ! this jacobi rotation subroutine is copied from numerical recipes
   ! with a few changes made as to variable type definitions
@@ -2124,7 +2019,6 @@ contains
     INTEGER :: i,ip,iq,n
     REAL*8 :: c,g,h,s,sm,t,tau,theta,tresh
     REAL*8, DIMENSION(size(d)) :: b,z
-
 
     ! check sizes
     if ( (size(a,1)==size(a,2) ) .and. (size(a,2)==size(d) ) .and. (size(d)==size(v,1) ) .and. (size(v,1)==size(v,2) ) ) then
@@ -2343,12 +2237,6 @@ contains
 
   !*****************************************************
 
-
-
-
-
-
-
   !******************************************************
   !        Here are some string manipulation routines 
   !        written by Dr. George Benthien and taken from
@@ -2389,8 +2277,6 @@ contains
     str=strsav
 
   end subroutine parse
-
-
 
   subroutine compact(str)
 
@@ -2433,7 +2319,6 @@ contains
     str=adjustl(outstr)
 
   end subroutine compact
-
 
   subroutine split(str,delims,before,sep)
 
