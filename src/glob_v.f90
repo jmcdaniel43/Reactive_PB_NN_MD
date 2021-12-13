@@ -42,8 +42,8 @@ implicit none
 !causing simulation problems
   character(3), parameter  :: verlet_allpairs="no"
 
-  character(3), parameter  :: ms_evb_simulation="yes"   ! ms_evb
-  character(3), parameter  :: print_ms_evb_data = "yes"  ! if yes, this will print extra evb trajectory info
+  character(3), parameter  :: ms_evb_simulation="no"   ! ms_evb
+  character(3), parameter  :: print_ms_evb_data = "no"  ! if yes, this will print extra evb trajectory info
 
 !***********************************************************************************************
 
@@ -274,8 +274,6 @@ implicit none
   real*8, dimension(:),allocatable     ::  ewaldscale_table
  end type PME_data_type
 
-
-
  !*********************** defined type to store bond pair indices
  type bond_list_type
   integer                              ::  i_atom, j_atom 
@@ -311,15 +309,12 @@ implicit none
    integer, dimension(:),allocatable  :: evb_reactive_basic_atoms
  end type molecule_type_data_type
 
-
  ! data structure of molecule types, we don't make this allocatable as it's
  ! impractical to figure out the number of unique molecule types without having a
  ! data structure to store molecule_type_information first
  ! also, for MS-EVB simulation, we could have more molecule types than are in
  ! the .gro input file, as we need types for conjugate acids/bases
  type(molecule_type_data_type), dimension(MAX_N_MOLE_TYPE) :: molecule_type_data
-
-
 
  !********************************************* global atomtype data structures for force field **************************************************************
   integer:: n_atom_type, n_molecule_type
@@ -342,7 +337,6 @@ implicit none
   real*8, dimension(MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE, MAX_N_ATOM_TYPE,MAX_N_ATOM_TYPE,6) :: atype_dihedral_parameter ! stores intra-molecular dihedral parameters, for improper:first parameter is xi0, second is kxi ; for proper, first is phi0, second is kphi, third is multiplicity ; for ryckaert-bellemans, first is C0, second is C1, third is C2, fourth is C3, fifth is C4 and sixth is C5 
 
 !*******************************************************************************************************************************************
-
 
   ! C6-C12 dispersion damping function tables
   ! the value of the 6th order Tang Toennies damping function at x=30 is
@@ -375,9 +369,6 @@ implicit none
   character(8)::date
   character(10)::time
 
-
-
-
   contains
 
   !***************************************************
@@ -405,7 +396,6 @@ implicit none
   ! fill in sizes of PME lookup tables
   PME_data%spline_grid=100000
   PME_data%erfc_grid=100000      !1000000
-
 
   ! name of velocity checkpoint file
   file_io_data%ifile_velocity = "velocity_checkpoint"  ! use this if restarting a simulation  

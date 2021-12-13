@@ -15,9 +15,7 @@ module pme_routines
   ! Essmann et al , J. Chem. Phys. 1995, 103, 8577-8593
   !*******************************************************************
 
-
 contains
-
 
   !************************************************
   ! This calculates recprocal-space, PME electrostatic energy and forces
@@ -30,7 +28,7 @@ contains
   subroutine pme_reciprocal_space_energy_force( system_data, atom_data, PME_data )
     use global_variables
     use MKL_DFTI
-!    use omp_lib
+    use omp_lib
     implicit none
     type(system_data_type), intent(inout)   :: system_data
     type(atom_data_type) , intent(inout)    :: atom_data
@@ -65,7 +63,6 @@ contains
     ! grid_Q, use scaled coordinates
     call grid_Q(PME_data%Q_grid,atom_data%charge,xyz_scale,PME_data)
 
-
     !****************************timing**************************************!
     if(debug .eq. 1) then
        call date_and_time(date,time)
@@ -91,7 +88,6 @@ contains
     !*** equals Finv(F(Finv(B*C) conv Q)
     !*** equals K**3*Finv(B*C*F(Q))
 
-
     FQ=RESHAPE(q_1d, (/K,K,K/) )
 
     !****************************timing**************************************!
@@ -111,10 +107,8 @@ contains
     endif
     !************************************************************************!
 
-
     !** take Finv
     q_1d=RESHAPE(FQ,(/K**3/) )
-
 
     status = DftiComputeBackward(PME_data%dfti_desc_inv, q_1d)
 
@@ -130,11 +124,9 @@ contains
 
     deallocate( FQ, q_1r, q_1d )
 
-
     !****** PME reciprocal space energy
     pme_Erecip=.5D0*sum((PME_data%Q_grid*PME_data%theta_conv_Q))*constants%conv_e2A_kJmol   
     system_data%E_elec =  system_data%E_elec + pme_Erecip
-
 
     ! store the reciprocal space energy for ms-evb if needed
     Select Case(ms_evb_simulation)
@@ -157,21 +149,20 @@ contains
     endif
     !************************************************************************!
 
-
     ! zero reciprocal space forces
     PME_data%force_recip=0d0
 
-!    call OMP_SET_NUM_THREADS(n_threads)
-!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,PME_data, xyz_scale, atom_data, K, system_data,kk,split_do,constants) 
-!    !$OMP DO SCHEDULE(dynamic, split_do)
+    call OMP_SET_NUM_THREADS(n_threads)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,total_atoms,PME_data, xyz_scale, atom_data, K, system_data,kk,split_do,constants) 
+    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,total_atoms
        ! the reason we pass theta_conv_Q separately is we want the flexibility
        ! to input a temporary array for this in the ms_evb code
        call derivative_grid_Q(force, PME_data%theta_conv_Q, atom_data%charge, xyz_scale, i_atom, PME_data,kk, constants%conv_e2A_kJmol )
        PME_data%force_recip(:,i_atom)=PME_data%force_recip(:,i_atom)+force(:)
     enddo
-!    !$OMP END DO NOWAIT
-!    !$OMP END PARALLEL
+    !$OMP END DO NOWAIT
+    !$OMP END PARALLEL
 
     !****************************timing**************************************!
     if(debug .eq. 1) then
@@ -187,16 +178,12 @@ contains
 
   end subroutine pme_reciprocal_space_energy_force
 
-
-
-
-
   !*****************************************************************
   ! This subroutine interpolates charges onto Q grid to be used in pme reciprocal space routines
   !*****************************************************************
   subroutine grid_Q(Q,chg,xyz, PME_data)
     use global_variables
-!    use omp_lib
+    use omp_lib
     real*8, intent(in), dimension(:) :: chg
     real*8, intent(in), dimension(:,:) :: xyz
     type(PME_data_type), intent(in)    :: PME_data
@@ -221,17 +208,17 @@ contains
     endif
 
     ! parameter spline_grid undeclared, but ok
-!    call OMP_SET_NUM_THREADS(n_threads)
-!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,PME_data) REDUCTION(+:Q)
+    call OMP_SET_NUM_THREADS(n_threads)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(split_do,xyz,chg,tot_atoms,PME_data) REDUCTION(+:Q)
        ! local variables for convenience
        K=PME_data%pme_grid
        spline_order=PME_data%spline_order
        spline_grid=PME_data%spline_grid
-!    !$OMP DO SCHEDULE(dynamic, split_do)
+    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_atom=1,tot_atoms
        u=xyz(:,i_atom)
        nearpt=floor(u)
-
+       
        ! loop over outer index of Q grid first, to more efficiently use memory
        ! only need to go to k=0,spline_order-1, for k=spline_order, arg > spline_order, so don't consider this
        do k3=0,spline_order-1
@@ -271,14 +258,10 @@ contains
           enddo
        enddo
     enddo
-!    !$OMP END DO NOWAIT
-!    !$OMP END PARALLEL
+    !$OMP END DO NOWAIT
+    !$OMP END PARALLEL
 
   end subroutine grid_Q
-
-
-
-
 
   !*********************************
   ! this subroutine either adds or subtracts the contribution of 
@@ -308,7 +291,6 @@ contains
     K=PME_data%pme_grid
     spline_order=PME_data%spline_order
     spline_grid=PME_data%spline_grid
-
 
     do j=1,n_atom
        if ( abs(chg(j)) > small ) then
@@ -351,8 +333,6 @@ contains
        end if
     enddo
   end subroutine modify_Q_grid
-
-
 
   !**************************************************
   ! this subroutine computes derivatives of grid Q with respect 
@@ -432,7 +412,6 @@ contains
              g2=ceiling(arg2/real(spline_order-1)*real(spline_grid))
              g1n=ceiling(arg1/real(spline_order)*real(spline_grid))
              g1nmin = ceiling(arg1/real(spline_order-1)*real(spline_grid))
-
 
 !!!!!force in x direction
              g1=g1n;g1(1)=g1nmin(1);
@@ -518,9 +497,6 @@ contains
 
   end subroutine derivative_grid_Q
 
-
-
-
   !***********************************************
   ! this function calculates B_splines which are used in pme as interpolating
   ! functions.  B_splines are calculated recursively, and therefore it's a good idea
@@ -551,11 +527,9 @@ contains
           mn(j,i)=(ui/dble(j))*mn(j-1,i)+((dble(j+1)-ui)/dble(j))*mn(j-1,i+1)
        enddo
     enddo
-
     B_spline=mn(n-1,1)
 
   end function B_spline
-
 
   !***********************************************************
   ! This is a routine for reciprocal space pme calculation
@@ -569,6 +543,7 @@ contains
     real*8,dimension(3)::mm
     real*8::mag
     integer::i,j,l,m1,m2,m3
+    
     do i=0,K-1
        if(i>K/2) then
           m1=i-K
@@ -593,11 +568,9 @@ contains
           enddo
        enddo
     enddo
-
     CB(1,1,1)=0.D0
 
   end subroutine CB_array
-
 
   !******************************************************
   ! this is needed in reciprocal space pme calculation
@@ -616,14 +589,10 @@ contains
        sum=sum+B_spline(dble(i+1),n)*cmplx(cos(tmp),sin(tmp))
 !!$     sum=sum+B6_spline(dble(i+1)/6.*dble(spline_grid))*cmplx(cos(tmp),sin(tmp))
     enddo
-
-
     bm=1.D0/sum
     bm_sq=dble(bm)**2+aimag(bm)**2
 
   end function bm_sq
-
-
 
   !***************************************************************************
   ! This function updates Ewald self interaction energy
@@ -653,9 +622,7 @@ contains
     ! convert from e^2/A to kJ/mol energy units
     PME_data%Ewald_self = PME_data%Ewald_self * constants%conv_e2A_kJmol
 
-
   end subroutine update_Ewald_self
-
 
   !***************************************************************************
   ! This function updates the CB_array in the PME_data structure due to volume
@@ -685,7 +652,7 @@ contains
       call crossproduct( b, c, ka ); ka = ka / system_data%volume
       call crossproduct( c, a, kb ); kb = kb / system_data%volume
       kk(1,:)=ka(:);kk(2,:)=kb(:);kk(3,:)=kc(:)
-
+      
       call CB_array(PME_data%CB,PME_data%alpha_sqrt,system_data%volume,PME_data%pme_grid,kk,PME_data%spline_order)
 
       call allocate_verlet_list(verlet_list_data, system_data%total_atoms, system_data%volume)

@@ -42,7 +42,6 @@ program main_ms_evb
   call read_simulation_parameters( file_io_data%ifile_simpmt_file_h, file_io_data%ifile_simpmt, system_data, integrator_data, verlet_list_data, PME_data )
   call initialize_simulation( system_data, molecule_data, atom_data, file_io_data, verlet_list_data, PME_data )
 
-
   !*** open output files if this is not a continuation run.  If this is a continuation, these files will
   ! already be open, and prepared to be appended to, in the check_restart_trajectory subroutine
   Select Case( restart_trajectory )
@@ -81,7 +80,6 @@ program main_ms_evb
   Case("no")
      call print_simulation_info( file_io_data%ofile_log_file_h , system_data , integrator_data, verlet_list_data, PME_data )
   End Select
-
 
   call initialize_energy_force( system_data, molecule_data, atom_data, verlet_list_data, PME_data, file_io_data, integrator_data )
 

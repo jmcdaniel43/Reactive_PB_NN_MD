@@ -18,12 +18,9 @@ module ms_evb
   ! updated for new diabats
   !************************************
 
-
   real*8 , dimension(evb_max_states,evb_max_states)  :: evb_hamiltonian
   integer, dimension(evb_max_states,evb_max_states)  :: evb_forces_lookup_index
   real*8, dimension(:,:,:), allocatable :: evb_forces_store
-
-
 
   !************************************ evb topology information ***********************
   ! this stores the information about the proton hops necessary to get from the principle diabat to the specified diabat
@@ -74,13 +71,11 @@ contains
     call read_evb_parameters( file_io_data%ifile_top_file_h, file_io_data%ifile_top )
     call read_evb_topology( file_io_data%ifile_top_file_h, file_io_data%ifile_top )
 
-
     ! update hydronium molecule list
     call update_hydronium_molecule_index( n_mole, molecule_data )
 
     ! check consistency
     call evb_consistency_checks( )
-
 
     ! inform about ms evb parameters
     write(*,*) ""
@@ -93,8 +88,6 @@ contains
     write(*,*) ""
 
   end subroutine initialize_evb_simulation
-
-
 
   !************************
   ! this subroutine updates the hydronium_molecule_index array
@@ -268,7 +261,6 @@ contains
 
     allocate( eigenvalues(diabat_index) , ground_state_eigenvector(diabat_index), hamiltonian(diabat_index, diabat_index) , hamiltonian_copy(diabat_index, diabat_index), eigenvectors(diabat_index,diabat_index) )
 
-
     !    write(*,*) "hamiltonian"
     hamiltonian=0d0
     do i_state = 1 , diabat_index
@@ -316,7 +308,6 @@ contains
        end do
     end do
 
-
     ! now figure out which hydronium molecule corresponds to the new principle diabat
     principle_diabat=1
     state_coefficient = abs(ground_state_eigenvector(1))
@@ -358,8 +349,6 @@ contains
     deallocate( eigenvalues , ground_state_eigenvector, hamiltonian , eigenvectors )
 
   end subroutine diagonalize_evb_hamiltonian
-
-
 
   !************************************
   ! This subroutine loops through all ms evb states, and constructs the evb hamiltonian matrix
@@ -499,9 +488,6 @@ contains
 
   end subroutine construct_evb_hamiltonian
 
-
-
-
   !***********************************************
   ! this subroutine constructs all diabatic states using recursive proton hops
   !
@@ -620,10 +606,6 @@ contains
 
   end subroutine evb_conduct_proton_transfer_recursive
 
-
-
-
-
   !***************************************
   ! this subroutine constructs the evb hamiltonian elements
   ! for a particular donor and acceptor pair
@@ -656,7 +638,6 @@ contains
     integer, dimension( n_proton_max ), save :: hydronium_molecule_index_temp
     integer :: split_do
 
-
     ! decide how to split the parallel section
     if (n_threads .eq. 1 ) then
        split_do = 1
@@ -670,18 +651,18 @@ contains
     endif
 
     ! loop over diabats, excluding principle diabat
-!    call OMP_SET_NUM_THREADS(n_threads)
-!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, system_data, molecule_data, atom_data, PME_data,  hydronium_molecule_index, i_mole_principle, diabat_index,  evb_hamiltonian, evb_diabat_coupling_matrix, store_index, file_io_data ) 
-!    !$OMP DO SCHEDULE(dynamic, split_do)
+    call OMP_SET_NUM_THREADS(n_threads)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, system_data, molecule_data, atom_data, PME_data,  hydronium_molecule_index, i_mole_principle, diabat_index,  evb_hamiltonian, evb_diabat_coupling_matrix, store_index, file_io_data ) 
+    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_diabat = 2, diabat_index
        call evb_create_diabat_data_structures( atom_data_diabat, molecule_data_diabat, system_data_diabat, atom_data, molecule_data , system_data , hydronium_molecule_index_temp, hydronium_molecule_index )
        !************************** calculate diagonal matrix element energy and forces for this diabat
        ! important note, after call to ms_evb_diabat_force_energy, the topology of the data structures will be changed from the donor to acceptor topology
        call ms_evb_diabat_force_energy( system_data_diabat, i_diabat, i_mole_principle, atom_data_diabat, molecule_data_diabat, PME_data, hydronium_molecule_index_temp)
        ! store the forces, this needs to be in critical section, because forces will be stored using store_index, and then store_index will be incremented
-!       !$OMP CRITICAL
+       !$OMP CRITICAL
        call evb_store_forces( i_mole_principle, i_diabat, i_diabat, system_data_diabat%n_mole, system_data_diabat%total_atoms, molecule_data_diabat, atom_data_diabat, store_index )
-!       !$OMP END CRITICAL
+       !$OMP END CRITICAL
        ! store the energy
        evb_hamiltonian( i_diabat , i_diabat ) = system_data_diabat%potential_energy
 
@@ -693,9 +674,9 @@ contains
        ! get donor diabat for which this coupling was calculated
        diabat_index_donor = evb_diabat_coupling_matrix(i_diabat)
        ! store the forces, note this coupling is between the current diabat, and the diabat_index_1neighbor (principle) diabat, again needs to be in critical section
-!       !$OMP CRITICAL
+       !$OMP CRITICAL
        call evb_store_forces( i_mole_principle, diabat_index_donor, i_diabat, system_data_diabat%n_mole, system_data_diabat%total_atoms, molecule_data_diabat, atom_data_diabat, store_index  )
-!       !$OMP END CRITICAL
+       !$OMP END CRITICAL
        ! store the energy
        evb_hamiltonian( diabat_index_donor , i_diabat ) = system_data_diabat%potential_energy
 
@@ -704,14 +685,11 @@ contains
        call deallocate_atom_data_diabat_type( atom_data_diabat )
 
     enddo
-!    !$OMP END DO NOWAIT
-!    !$OMP END PARALLEL
+    !$OMP END DO NOWAIT
+    !$OMP END PARALLEL
 
 
   end subroutine evb_hamiltonian_elements_donor_acceptor
-
-
-
 
   !************************************
   ! this subroutine searches for evb reactive neighbors
@@ -785,8 +763,6 @@ contains
 
   end subroutine find_evb_reactive_neighbors
 
-
-
   !*********************************************
   ! this subroutine allocates diabat data structures
   ! and copies over data from primary diabat structures
@@ -820,9 +796,6 @@ contains
 
 
   end subroutine evb_create_diabat_data_structures
-
-
-
 
   !***********************************************
   ! this subroutine modifies data structures to be consistent with
@@ -858,12 +831,7 @@ contains
 
     enddo loop1
 
-
   end subroutine evb_change_diabat_data_structure_topology
-
-
-
-
 
   !*************************************
   !
@@ -963,8 +931,6 @@ contains
 
   end subroutine evb_change_data_structures_proton_transfer
 
-
-
   !************************************************
   ! this subroutine reorders data structures
   ! if they are inconsistent with molecule_type array
@@ -1039,9 +1005,6 @@ contains
 
   end subroutine reorder_molecule_data_structures
 
-
-
-
   !*************************************************
   ! this subroutine calculates the diabatic coupling 
   ! hamiltonian matrix elements and their corresponding forces
@@ -1101,11 +1064,8 @@ contains
 
     enddo
 
-
-
     ! first calculate solvent dependent prefactor, and its derivative w.r.t. atomic coordinates
     call evb_diabatic_coupling_electrostatics( Vex, dVex, i_mole_donor, i_mole_acceptor, system_data_diabat, atom_data_diabat, molecule_data_diabat )
-
 
     ! set pointers for acceptor and donor molecules to atom_data data structures
     call return_molecule_block( single_molecule_data_donor , molecule_data_diabat(i_mole_donor)%n_atom, molecule_data_diabat(i_mole_donor)%atom_index, atom_xyz=atom_data_diabat%xyz, atom_force=atom_data_diabat%force, atom_type_index=atom_data_diabat%atom_type_index, atom_name=atom_data_diabat%aname )
@@ -1142,8 +1102,6 @@ contains
     deallocate( dVex )
 
   end subroutine evb_diabatic_coupling
-
-
 
   !********************************
   ! this returns the geometric term for the
@@ -1208,16 +1166,12 @@ contains
 
     call evb_diabatic_coupling_function( A , Vconstij , dA , function_type , evb_diabat_coupling_parameters(index,:) , q , r_OO )
 
-
     ! Note dA derivative array is returned as follows:
     ! dA(:,1) is derivative w.r.t. O_donor coordinates
     ! dA(:,2) is derivative w.r.t. O_acceptor coordinates
     ! dA(:,3) is derivative w.r.t. H zundel coordinates
 
   end subroutine evb_diabatic_coupling_geometric
-
-
-
 
   !**********************************************
   ! this subroutine evaluates different functional forms of the diabatic_coupling geometric
@@ -1310,11 +1264,6 @@ contains
 
 
   end subroutine evb_diabatic_coupling_function
-
-
-
-
-
 
   !**********************************************
   ! this is the electrostatic part of the diabatic coupling
@@ -1452,11 +1401,6 @@ contains
     call dissociate_single_molecule_data(single_molecule_data_acceptor)
 
   end subroutine evb_diabatic_coupling_electrostatics
-
-
-
-
-
 
   !*********************************************
   ! this subroutine calculates the total energy and force for a 
@@ -1613,9 +1557,6 @@ contains
 
 
   end subroutine ms_evb_diabat_force_energy
-
-
-
 
   !**********************************
   ! this subroutine calculates the real-space force and energy
@@ -1814,14 +1755,12 @@ contains
           pairwise_atom_data%dr2(j_atom) = dot_product( pairwise_atom_data%dr(:,j_atom), pairwise_atom_data%dr(:,j_atom) )
        enddo
 
-
        ! screen out acceptor atoms,
        ! also don't count acceptor-donor interaction twice, it has been counted above
        allocate(molecule_list(2))
        molecule_list(1) = i_mole_donor ; molecule_list(2) = i_mole_acceptor
        call create_atom_screen_list( screen_list , molecule_list , molecule_data_diabat )
        deallocate(molecule_list)
-
 
        ! now check cutoff
        cutoff_mask_lj=0
@@ -1952,13 +1891,7 @@ contains
 
     end subroutine fill_pairwise_atom_data
 
-
-
   end subroutine ms_evb_diabat_force_energy_update_real_space
-
-
-
-
 
   !**********************************
   ! this subroutine calculates the intra-molecular bond and angle force and energy
@@ -2020,12 +1953,6 @@ contains
 
   end subroutine ms_evb_diabat_force_energy_update_intra
 
-
-
-
-
-
-
   !************************************
   ! this subroutine calculates the reciprocal_space_pme
   ! energy and force for each diabat, using the dQ_dr stored grid from
@@ -2034,7 +1961,7 @@ contains
   !***********************************
   subroutine calculate_reciprocal_space_pme( i_mole_principle, system_data , molecule_data, atom_data, PME_data  )
     use MKL_DFTI
-!    use omp_lib
+    use omp_lib
     implicit none
     integer, intent(in) :: i_mole_principle
     type(system_data_type), intent(in) :: system_data
@@ -2057,7 +1984,6 @@ contains
     length=PME_data%pme_grid
 
     call construct_reciprocal_lattice_vector(kk, system_data%box)
-
 
     !*************************************************************
     !                             IMPORTANT:: 
@@ -2091,12 +2017,12 @@ contains
     endif
 
     !**** parallelize over diabats
-!    call OMP_SET_NUM_THREADS(n_threads)
-!    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, Q_grid_diabats,system_data,atom_data,molecule_data,PME_data,constants,K,kk,i_mole_principle, diabat_index,evb_forces_lookup_index,evb_hamiltonian,evb_forces_store,dfti_desc_local,dfti_desc_inv_local) 
-!    !$OMP CRITICAL
+    call OMP_SET_NUM_THREADS(n_threads)
+    !$OMP PARALLEL DEFAULT(PRIVATE) SHARED(n_threads,split_do, Q_grid_diabats,system_data,atom_data,molecule_data,PME_data,constants,K,kk,i_mole_principle, diabat_index,evb_forces_lookup_index,evb_hamiltonian,evb_forces_store,dfti_desc_local,dfti_desc_inv_local) 
+    !$OMP CRITICAL
     allocate( FQ(K,K,K), Q_local(K,K,K), theta_conv_Q_local(K,K,K), q_1r(K**3), q_1d(K**3), pme_force_recip_diabat(3,system_data%total_atoms) )
-!    !$OMP END CRITICAL
-!    !$OMP DO SCHEDULE(dynamic, split_do)
+    !$OMP END CRITICAL
+    !$OMP DO SCHEDULE(dynamic, split_do)
     do i_diabat=2,diabat_index  ! skip the first diabat, as that is the principle diabat, and the force is correct
 
        ! Q grid for this diabat should already be stored
@@ -2132,7 +2058,6 @@ contains
           enddo
        enddo
 
-
        ! dQ_dr is stored in scaled coordinates, convert to general coordinates
        do i_atom=1, system_data%total_atoms
           force_temp=0d0
@@ -2160,17 +2085,14 @@ contains
 
     enddo
 
-!    !$OMP END DO NOWAIT
+    !$OMP END DO NOWAIT
     deallocate( FQ, Q_local, q_1r, q_1d,theta_conv_Q_local, pme_force_recip_diabat )
-!    !$OMP END PARALLEL
+    !$OMP END PARALLEL
 
     status=DftiFreeDescriptor(dfti_desc_local)
     status=DftiFreeDescriptor(dfti_desc_inv_local)
 
   end subroutine calculate_reciprocal_space_pme
-
-
-
 
   !*********************************************
   ! this subroutine updates the reciprocal space force
@@ -2312,8 +2234,6 @@ contains
 
     enddo loop1
 
-
-
     !***************************************** now map forces back to principle diabat topology using recursive subroutine
     ! output pme_force_recip_diabat, note atom_data_diabat%force is not a  pointer...
     pme_force_recip_diabat = atom_data_diabat%force
@@ -2326,9 +2246,6 @@ contains
     call deallocate_atom_data_diabat_type( atom_data_diabat )
 
   end subroutine update_reciprocal_space_force_dQ_dr
-
-
-
 
   !**************************************
   !  This subroutine calculates the non-Coulombic, non-Lennard Jones,
@@ -2365,9 +2282,6 @@ contains
     end do
 
   end subroutine ms_evb_intermolecular_repulsion
-
-
-
 
   !**************************************
   !  This subroutine calculates the non-Coulombic, non-Lennard Jones,
@@ -2484,8 +2398,6 @@ contains
 
   end subroutine ms_evb_three_atom_repulsion
 
-
-
   !********************************
   ! these are general Born-Mayer interactions between
   ! atoms on the proton-donor and acceptor
@@ -2565,9 +2477,6 @@ contains
 
   end subroutine ms_evb_born_mayer
 
-
-
-
   !************************************
   ! this is switching function (and derivative) for repulsive hydronium-water
   ! interactions
@@ -2593,11 +2502,6 @@ contains
     end if
 
   end subroutine ms_evb_repulsive_switch
-
-
-
-
-
 
   !*********************************
   ! this subroutine stores the forces for the evb-hamitonian matrix elements
@@ -2685,8 +2589,6 @@ contains
 
   end subroutine evb_store_forces
 
-
-
   !************************
   ! this subroutine maps the force data structure from an arbitrary diabatic topology
   ! back to the principle diabat topology
@@ -2752,9 +2654,6 @@ contains
 
 
   end subroutine map_diabat_force_to_principle_recursive
-
-
-
 
   !**************************
   ! this subroutine shifts input data structures for a single proton transfer
@@ -2903,8 +2802,6 @@ contains
        array1dc(i_atom_transfer_to_global)    = elementc
     end if
 
-
-
     if ( i_atom_transfer_from_global < i_atom_transfer_to_global )  then
        ! here we've shifted elements up in array
        ! shift atom_indexes down one for all molecules beyond i_mole_transfer_from
@@ -2942,10 +2839,6 @@ contains
 
   end subroutine shift_array_data_donor_acceptor_transfer
 
-
-
-
-
   !**************************
   ! this subroutine retrieves the reference energy (chemical energy) of
   ! each adiabatic state.  Currently, this is stored for each acid, 
@@ -2960,8 +2853,6 @@ contains
     E_reference = evb_reference_energy( i_type )
 
   end subroutine get_adiabatic_reference_energy
-
-
 
   !*************************
   ! this function checks if the input molecule is 
@@ -2981,7 +2872,6 @@ contains
     enddo
 
   end function check_hydronium_molecule
-
 
   !*********************************
   ! this subroutine returns the index of the basic heavy atom involved
@@ -3020,9 +2910,6 @@ contains
 
   end subroutine get_heavy_atom_transfer_base
 
-
-
-
   !*********************************
   ! this subroutine returns the index of the acidic heavy atom involved
   ! in a proton transfer
@@ -3049,8 +2936,6 @@ contains
     if ( i_atom_acid == -1 ) stop "couldn't find atom type in subroutine get_heavy_atom_transfer_acid"
 
   end subroutine get_heavy_atom_transfer_acid
-
-
 
   !****************************
   ! this function returns the center of mass of the
@@ -3096,9 +2981,6 @@ contains
 
   end function zundel_r_com
 
-
-
-
   !**************************************
   ! this subroutine changes the atom index of
   ! the transferring proton to the acceptor molecule type
@@ -3120,9 +3002,6 @@ contains
     atom_type_index(i_atom_acceptor) = evb_proton_index( i_acid_type )
 
   end subroutine change_proton_index_proton_transfer
-
-
-
 
   !*********************************
   ! here we return a screen list to screen out atoms of molecules
@@ -3150,8 +3029,6 @@ contains
     end do
 
   end subroutine create_atom_screen_list
-
-
 
   !******************************
   ! this subroutine initializes the atom_data_diabat data structure and copies
@@ -3187,8 +3064,6 @@ contains
 
 
   end subroutine initialize_atom_data_diabat_type
-
-
   
   !*****************************
   ! we need to explicitly deallocate this data structure
@@ -3205,9 +3080,6 @@ contains
     deallocate( molecule_data_diabat )
 
   end subroutine deallocate_molecule_data_diabat_type
-
-
-
  
   !*****************************
   ! because we use pointers to point to
@@ -3227,9 +3099,6 @@ contains
     deallocate( atom_data_diabat%aname )
 
   end subroutine deallocate_atom_data_diabat_type
-
-
-
 
   !******************************
   ! this subroutine makes sure we don't have too many
@@ -3252,10 +3121,6 @@ contains
     end if
 
   end subroutine evb_check_number_diabats
-
-
-
-
 
   !******************************
   ! this subroutine prints the evb trajectory information
@@ -3295,8 +3160,6 @@ contains
 
 
   end subroutine print_evb_trajectory_data
-
-
 
   !************************************
   ! this subroutine reads evb topology information
@@ -3479,10 +3342,6 @@ contains
 100 continue
 
   end subroutine read_evb_topology
-
-
-
-
 
   !************************************
   ! this subroutine reads evb_parameters grouped by various
@@ -3763,8 +3622,6 @@ contains
 
   end subroutine read_evb_parameters
 
-
-
   !***************************************************
   ! this subroutine writes i/o info to standard output based on
   ! the input string
@@ -3806,9 +3663,6 @@ contains
 
 
   end subroutine write_ms_evb_io_info
-
-
-
 
   !*****************************************************
   ! this subroutine stops the code and writes an error is

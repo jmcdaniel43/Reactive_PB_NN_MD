@@ -7,7 +7,7 @@ contains
 
   !*************************************************************************
   !  this subroutine controls what ensemble to run, and calls appropriate subroutines
-  !  currently, only NVE molecular dynamics is implemented
+  !  currently, NVE, NVT and NPT molecular dynamics are implemented
   !
   !  data structure molecule_data will be changed if MS-EVB simulation, and we
   !  have proton hop, hence intent(inout)
@@ -36,8 +36,6 @@ contains
 
 
   end subroutine mc_sample
-
-
 
   !*************************************************************************
   ! samples velocities for all atoms from Maxwell-Boltzmann
@@ -119,9 +117,6 @@ contains
 
   end subroutine sample_atomic_velocities
 
-
-
-
   !*******************************************************
   ! this subroutine calculates the center of mass momentum of the system,
   ! and subtracts the total net per atom contribution from each atom's momentum,
@@ -180,7 +175,6 @@ contains
   call dissociate_single_molecule_data(single_molecule_data)
 
   end subroutine subtract_center_of_mass_momentum
-
 
 
   !************************************************************************
@@ -298,7 +292,7 @@ contains
           system_data%box(j,j) = system_data%box(j,j) + deltalen
       end do
       call periodic_box_change(system_data, PME_data, verlet_list_data, atom_data, molecule_data)
-
+      
       ! scale molecular coordinates to new box size
       do i=1,system_data%n_mole
         call scale_coordinates(i, newboxlen/oldboxlen, system_data, molecule_data, atom_data)
@@ -427,7 +421,6 @@ contains
       end do
   end subroutine
 
-
   !************************************************************************
   ! this is the MD engine for atomistic molecular simulations.  
   ! currently, this uses the velocity verlet algorithm to integrate Newton's equations
@@ -469,7 +462,6 @@ contains
     dt = integrator_data%delta_t
     conv_fac = constants%conv_kJmol_ang2ps2gmol  ! converts kJ/mol to A^2/ps^2*g/mol
     total_atoms = system_data%total_atoms
-
 
     !******************* Velocity Verlet Integrator or Langevin Leapfrog 
 
@@ -535,7 +527,6 @@ contains
 
           end if
     end do
-
 
     ! finally remove center of mass momentum.  This should be numerical noise, so shouldn't effect energy conservation
     call subtract_center_of_mass_momentum(system_data%n_mole, molecule_data, atom_data )

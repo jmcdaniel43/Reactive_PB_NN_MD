@@ -65,7 +65,6 @@ contains
 
     atom_data%velocity=0d0;atom_data%force=0d0;atom_data%mass=0d0;atom_data%charge=0d0; atom_data%atom_type_index=0
 
-
     ! if restarting, read in velocities from restart file
     Select Case( restart_trajectory )
     Case("yes")
@@ -91,7 +90,6 @@ contains
     !that box type is supported
     call check_cutoffs_box( real_space_cutoff, verlet_list_data%verlet_cutoff, system_data%box )
 
-
     !************************************** get parameters****************************************************!
     ! get parameters for all atom types, assuming there are no more than MAX_N_ATOM_TYPE types of atoms total
     !*****************************************************************************************************!
@@ -100,7 +98,6 @@ contains
     if ( n_atom_type > MAX_N_ATOM_TYPE ) then
        stop "number of atom types g.t. MAX_N_ATOM_TYPE.  Increase this value"
     endif
-
 
     ! ********************* generate cross terms and fill in parameter arrays****************************!
     ! fill in total parameter arrays that are stored in global_variables
@@ -121,24 +118,20 @@ contains
     ! mass is read in from topology file, fill in mass for each molecule
     call fill_mass( system_data%total_atoms, atom_data%mass, atom_data%atom_type_index )
 
-
     ! center of mass
     call update_r_com( system_data%n_mole, molecule_data, atom_data )
 
     ! center of mass of molecule might be outside of box after calling subroutine fix_intra_molecular_shifts, fix this
     call shift_molecules_into_box( system_data%n_mole , molecule_data , atom_data , system_data%box,  system_data%xyz_to_box_transform )
 
-
     ! generate exclusions, note that some exclusions may have already been explicity read in from topology file.
     call generate_intramolecular_exclusions
-
 
     !*********************************initialize verlet list
     call allocate_verlet_list( verlet_list_data, system_data%total_atoms, system_data%volume )
     call construct_verlet_list( verlet_list_data, atom_data, molecule_data, system_data%total_atoms, system_data%box, system_data%xyz_to_box_transform  )
     ! the "1" input to update_verlet_displacements signals to initialize the displacement array
     call update_verlet_displacements( system_data%total_atoms, atom_data%xyz, verlet_list_data , system_data%box, system_data%xyz_to_box_transform , flag_junk, 1 )
-
 
     ! initialize ms_evb simulation
     Select Case(ms_evb_simulation)
@@ -164,8 +157,6 @@ contains
     allocate(PME_data%force_recip(3,system_data%total_atoms) )
 
   end subroutine initialize_simulation
-
-
 
   !**************************************************!
   ! this subroutine initializes energy and force calculations
@@ -195,7 +186,6 @@ contains
     integer:: i,length(3),status, pme_grid
     real*8 :: x, alphasqrt_r, r
 
-
     !************************************* initialize ewald/pme ************************************************!
 
     ! note here that tot_chg was passed to this subroutine, so drude oscillator charges are accounted for
@@ -203,7 +193,7 @@ contains
     call update_Ewald_self( system_data%total_atoms, atom_data, PME_data )
 
     pme_grid=PME_data%pme_grid
-
+    
     ! allocate arrays
     allocate(PME_data%CB(pme_grid,pme_grid,pme_grid),PME_data%Q_grid(pme_grid,pme_grid,pme_grid),PME_data%theta_conv_Q(pme_grid,pme_grid,pme_grid))
 
@@ -217,7 +207,7 @@ contains
 
     ! initialize PME dependency on system volume
     call periodic_box_change(system_data, PME_data, verlet_list_data, atom_data, molecule_data)
-
+    
     ! grid B_splines
        if (PME_data%spline_order .eq. 6) then
           allocate(PME_data%B6_spline(PME_data%spline_grid),PME_data%B5_spline(PME_data%spline_grid))
@@ -284,9 +274,6 @@ contains
     !************************************************************************************************!
 
   end subroutine initialize_energy_force
-
-
-
 
   !**************************************************!
   ! this subroutine reads atom_type parameters from input file for a non SAPT-based force field
